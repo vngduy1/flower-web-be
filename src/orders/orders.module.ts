@@ -15,6 +15,7 @@ import { DeliveriesModule } from '../deliveries/deliveries.module';
 import { CouponsModule } from '../coupons/coupons.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailsModule } from '../emails/emails.module';
+import { OrderCancellationService } from './order-cancellation.service';
 
 @Module({
   imports: [
@@ -33,7 +34,7 @@ import { EmailsModule } from '../emails/emails.module';
     EmailsModule,
   ],
   controllers: [OrdersController, AdminOrdersController],
-  providers: [OrdersService, AdminOrdersService],
+  providers: [OrdersService, AdminOrdersService, OrderCancellationService],
   exports: [OrdersService, AdminOrdersService],
 })
 export class OrdersModule {}

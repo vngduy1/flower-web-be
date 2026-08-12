@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { AuthenticatedRequest } from '../auth/interfaces/authenticated-request.interface';
 
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { NotificationsService } from './notifications.service';
@@ -27,7 +28,10 @@ export class NotificationsController {
    * GET /api/notifications?unreadOnly=true
    */
   @Get()
-  findAll(@Req() request: any, @Query() query: NotificationQueryDto) {
+  findAll(
+    @Req() request: AuthenticatedRequest,
+    @Query() query: NotificationQueryDto,
+  ) {
     return this.notificationsService.findAll(request.user.id, query);
   }
 
@@ -37,7 +41,7 @@ export class NotificationsController {
    * Route này phải đặt trước :id.
    */
   @Get('unread-count')
-  getUnreadCount(@Req() request: any) {
+  getUnreadCount(@Req() request: AuthenticatedRequest) {
     return this.notificationsService.getUnreadCount(request.user.id);
   }
 
@@ -45,7 +49,10 @@ export class NotificationsController {
    * GET /api/notifications/:id
    */
   @Get(':id')
-  findOne(@Req() request: any, @Param('id') notificationId: string) {
+  findOne(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') notificationId: string,
+  ) {
     return this.notificationsService.findOne(request.user.id, notificationId);
   }
 
@@ -55,7 +62,7 @@ export class NotificationsController {
    * Route này phải đặt trước :id/read.
    */
   @Patch('read-all')
-  markAllAsRead(@Req() request: any) {
+  markAllAsRead(@Req() request: AuthenticatedRequest) {
     return this.notificationsService.markAllAsRead(request.user.id);
   }
 
@@ -63,7 +70,10 @@ export class NotificationsController {
    * PATCH /api/notifications/:id/read
    */
   @Patch(':id/read')
-  markAsRead(@Req() request: any, @Param('id') notificationId: string) {
+  markAsRead(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') notificationId: string,
+  ) {
     return this.notificationsService.markAsRead(
       request.user.id,
       notificationId,
@@ -74,7 +84,10 @@ export class NotificationsController {
    * DELETE /api/notifications/:id
    */
   @Delete(':id')
-  remove(@Req() request: any, @Param('id') notificationId: string) {
+  remove(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') notificationId: string,
+  ) {
     return this.notificationsService.remove(request.user.id, notificationId);
   }
 }

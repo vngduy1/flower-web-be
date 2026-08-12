@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, Repository } from 'typeorm';
 
 import { Product } from '../products/entities/product.entity';
+import { ProductStatus } from '../products/enums/product-status.enum';
 import { CreateInventoryDto } from './dto/create-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
 import { Inventory } from './entities/inventory.entity';
@@ -80,6 +81,12 @@ export class InventoriesService {
     }
 
     return inventory;
+  }
+
+  async findPublicByProduct(productId: string): Promise<Inventory> {
+    await this.validateProduct(productId, true);
+
+    return this.findByProduct(productId);
   }
 
   /**
@@ -320,7 +327,10 @@ export class InventoriesService {
   /**
    * Kiểm tra sản phẩm tồn tại và chưa bị xóa.
    */
-  private async validateProduct(productId: string): Promise<Product> {
+  private async validateProduct(
+    productId: string,
+    requirePublicProduct = false,
+  ): Promise<Product> {
     const product = await this.productsRepository.findOne({
       where: {
         id: productId,
@@ -330,6 +340,12 @@ export class InventoriesService {
 
     if (!product) {
       throw new NotFoundException('Sản phẩm không tồn tại hoặc đã bị xóa');
+    }
+
+    if (requirePublicProduct && product.status !== ProductStatus.ACTIVE) {
+      throw new NotFoundException(
+        'Sản phẩm không tồn tại hoặc chưa được công khai',
+      );
     }
 
     return product;

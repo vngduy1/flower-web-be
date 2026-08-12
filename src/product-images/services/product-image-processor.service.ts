@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync, promises as fs } from 'fs';
-import { extname, join } from 'path';
+import { join } from 'path';
 import sharp from 'sharp';
 
 export interface ProcessedProductImage {

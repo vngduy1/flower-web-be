@@ -25,35 +25,66 @@ import { ReviewsModule } from './reviews/reviews.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { EmailsModule } from './emails/emails.module';
+import {
+  getDeploymentEnvironment,
+  readBoolean,
+  readPort,
+  validateEnvironment,
+} from './common/environment';
+import { HealthModule } from './common/health.module';
+import { LifecycleService } from './common/lifecycle.service';
+import { AddOrderIdempotency1786330000000 } from './migrations/1786330000000-AddOrderIdempotency';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      cache: true,
+      expandVariables: false,
+      validate: validateEnvironment,
     }),
 
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        type: 'mysql',
+      useFactory: (configService: ConfigService) => {
+        const deploymentEnvironment = getDeploymentEnvironment(configService);
+        const synchronize = readBoolean(
+          configService.get<string>('DB_SYNCHRONIZE'),
+          false,
+        );
+        const dropSchema = readBoolean(
+          configService.get<string>('DB_DROP_SCHEMA'),
+          false,
+        );
 
-        host: configService.getOrThrow<string>('DB_HOST'),
-        port: Number(configService.getOrThrow<string>('DB_PORT')),
-        username: configService.getOrThrow<string>('DB_USERNAME'),
-        password: configService.getOrThrow<string>('DB_PASSWORD'),
-        database: configService.getOrThrow<string>('DB_DATABASE'),
+        if (
+          ['staging', 'production'].includes(deploymentEnvironment) &&
+          synchronize
+        ) {
+          throw new Error(
+            'Database synchronization is forbidden in staging/production',
+          );
+        }
 
-        autoLoadEntities: true,
-
-        // Chỉ thuận tiện trong giai đoạn phát triển ban đầu.
-        // Sau này sẽ chuyển sang migration.
-        synchronize: true,
-
-        charset: 'utf8mb4',
-        timezone: '+09:00',
-
-        logging: true,
-      }),
+        return {
+          type: 'mysql' as const,
+          host: configService.getOrThrow<string>('DB_HOST'),
+          port: readPort(configService.get<string>('DB_PORT'), 'DB_PORT', 3306),
+          username: configService.getOrThrow<string>('DB_USERNAME'),
+          password: configService.getOrThrow<string>('DB_PASSWORD'),
+          database: configService.getOrThrow<string>('DB_DATABASE'),
+          autoLoadEntities: true,
+          synchronize,
+          dropSchema,
+          migrationsRun: false,
+          migrations: [AddOrderIdempotency1786330000000],
+          charset: 'utf8mb4',
+          timezone: '+09:00',
+          logging: readBoolean(configService.get<string>('DB_LOGGING'), false),
+          retryAttempts: 10,
+          retryDelay: 3000,
+        };
+      },
     }),
 
     RolesModule,
@@ -75,8 +106,9 @@ import { EmailsModule } from './emails/emails.module';
     NotificationsModule,
     DashboardModule,
     EmailsModule,
+    HealthModule,
   ],
   controllers: [AppController, CheckoutController, PaymentsController],
-  providers: [AppService, CheckoutService],
+  providers: [AppService, CheckoutService, LifecycleService],
 })
 export class AppModule {}

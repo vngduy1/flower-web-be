@@ -10,6 +10,7 @@ import { DEFAULT_CURRENCY } from '../common/constants/currency.constant';
 import { Inventory } from '../inventories/entities/inventory.entity';
 import { ProductImage } from '../product-images/entities/product-image.entity';
 import { Product } from '../products/entities/product.entity';
+import { ProductStatus } from '../products/enums/product-status.enum';
 
 import { AddCartItemDto } from './dto/add-cart-item.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
@@ -146,7 +147,7 @@ export class CartsService {
       const priceChanged = storedUnitPrice !== currentUnitPrice;
 
       const isProductActive =
-        product.deletedAt === null && product.status === 'ACTIVE';
+        product.deletedAt === null && product.status === ProductStatus.ACTIVE;
 
       const hasEnoughStock =
         inventory !== null && cartItem.quantity <= availableQuantity;
@@ -308,7 +309,10 @@ export class CartsService {
       throw new NotFoundException('Không tìm thấy sản phẩm trong giỏ hàng');
     }
 
-    if (item.product.deletedAt !== null || item.product.status !== 'ACTIVE') {
+    if (
+      item.product.deletedAt !== null ||
+      item.product.status !== ProductStatus.ACTIVE
+    ) {
       throw new ConflictException('Sản phẩm hiện không được phép bán');
     }
 
@@ -400,7 +404,7 @@ export class CartsService {
       throw new NotFoundException('Sản phẩm không tồn tại hoặc đã bị xóa');
     }
 
-    if (product.status !== 'ACTIVE') {
+    if (product.status !== ProductStatus.ACTIVE) {
       throw new ConflictException('Sản phẩm hiện không được phép bán');
     }
 

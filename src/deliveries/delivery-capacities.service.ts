@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
+import { DataSource, Not, Repository } from 'typeorm';
 
 import { CreateDeliveryCapacityDto } from './dto/create-delivery-capacity.dto';
 import { UpdateDeliveryCapacityDto } from './dto/update-delivery-capacity.dto';
@@ -19,6 +19,8 @@ export class DeliveryCapacitiesService {
 
     @InjectRepository(DeliveryTimeSlot)
     private readonly timeSlotRepository: Repository<DeliveryTimeSlot>,
+
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(dto: CreateDeliveryCapacityDto) {
@@ -105,75 +107,85 @@ export class DeliveryCapacitiesService {
   }
 
   async update(id: string, dto: UpdateDeliveryCapacityDto) {
-    const capacity = await this.capacityRepository.findOne({
-      where: {
-        id,
-      },
-      relations: {
-        timeSlot: true,
-      },
-    });
+    await this.dataSource.transaction(async (manager) => {
+      const capacityRepository = manager.getRepository(DeliveryCapacity);
+      const timeSlotRepository = manager.getRepository(DeliveryTimeSlot);
 
-    if (!capacity) {
-      throw new NotFoundException('Không tìm thấy cấu hình sức chứa giao hàng');
-    }
-
-    const nextDeliveryDate = dto.deliveryDate ?? capacity.deliveryDate;
-
-    const nextTimeSlotId = dto.timeSlotId ?? capacity.timeSlotId;
-
-    if (dto.timeSlotId !== undefined) {
-      const timeSlot = await this.timeSlotRepository.findOne({
-        where: {
-          id: dto.timeSlotId,
-        },
+      const capacity = await capacityRepository.findOne({
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
       });
 
-      if (!timeSlot) {
-        throw new NotFoundException('Không tìm thấy khung giờ giao hàng');
-      }
-
-      if (!timeSlot.isActive) {
-        throw new ConflictException('Khung giờ giao hàng đang bị vô hiệu hóa');
-      }
-    }
-
-    if (
-      nextDeliveryDate !== capacity.deliveryDate ||
-      nextTimeSlotId !== capacity.timeSlotId
-    ) {
-      const duplicate = await this.capacityRepository.findOne({
-        where: {
-          id: Not(id),
-          deliveryDate: nextDeliveryDate,
-          timeSlotId: nextTimeSlotId,
-        },
-      });
-
-      if (duplicate) {
-        throw new ConflictException(
-          'Sức chứa của ngày và khung giờ này đã tồn tại',
+      if (!capacity) {
+        throw new NotFoundException(
+          'Không tìm thấy cấu hình sức chứa giao hàng',
         );
       }
-    }
 
-    const nextMaxOrders = dto.maxOrders ?? capacity.maxOrders;
+      const nextDeliveryDate = dto.deliveryDate ?? capacity.deliveryDate;
+      const nextTimeSlotId = dto.timeSlotId ?? capacity.timeSlotId;
+      const isRelocation =
+        nextDeliveryDate !== capacity.deliveryDate ||
+        nextTimeSlotId !== capacity.timeSlotId;
 
-    if (nextMaxOrders < capacity.reservedOrders) {
-      throw new ConflictException(
-        'Sức chứa tối đa không được nhỏ hơn số đơn đã giữ chỗ',
-      );
-    }
+      if (isRelocation && capacity.reservedOrders > 0) {
+        throw new ConflictException(
+          'Không thể thay đổi ngày hoặc khung giờ khi đã có đơn giữ chỗ',
+        );
+      }
 
-    capacity.deliveryDate = nextDeliveryDate;
-    capacity.timeSlotId = nextTimeSlotId;
-    capacity.maxOrders = nextMaxOrders;
+      if (dto.timeSlotId !== undefined) {
+        const timeSlot = await timeSlotRepository.findOne({
+          where: { id: dto.timeSlotId },
+          lock: { mode: 'pessimistic_read' },
+        });
 
-    if (dto.isActive !== undefined) {
-      capacity.isActive = dto.isActive;
-    }
+        if (!timeSlot) {
+          throw new NotFoundException('Không tìm thấy khung giờ giao hàng');
+        }
 
-    await this.capacityRepository.save(capacity);
+        if (!timeSlot.isActive) {
+          throw new ConflictException(
+            'Khung giờ giao hàng đang bị vô hiệu hóa',
+          );
+        }
+      }
+
+      if (isRelocation) {
+        const duplicate = await capacityRepository.findOne({
+          where: {
+            id: Not(id),
+            deliveryDate: nextDeliveryDate,
+            timeSlotId: nextTimeSlotId,
+          },
+          lock: { mode: 'pessimistic_write' },
+        });
+
+        if (duplicate) {
+          throw new ConflictException(
+            'Sức chứa của ngày và khung giờ này đã tồn tại',
+          );
+        }
+      }
+
+      const nextMaxOrders = dto.maxOrders ?? capacity.maxOrders;
+
+      if (nextMaxOrders < capacity.reservedOrders) {
+        throw new ConflictException(
+          'Sức chứa tối đa không được nhỏ hơn số đơn đã giữ chỗ',
+        );
+      }
+
+      capacity.deliveryDate = nextDeliveryDate;
+      capacity.timeSlotId = nextTimeSlotId;
+      capacity.maxOrders = nextMaxOrders;
+
+      if (dto.isActive !== undefined) {
+        capacity.isActive = dto.isActive;
+      }
+
+      await capacityRepository.save(capacity);
+    });
 
     return this.findOne(id);
   }

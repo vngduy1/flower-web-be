@@ -8,6 +8,7 @@ import { IsNull, Repository } from 'typeorm';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Category } from './entities/category.entity';
+import { QueryCategoryDto } from './dto/query-category.dto';
 
 @Injectable()
 export class CategoriesService {
@@ -38,19 +39,47 @@ export class CategoriesService {
     return this.findOne(savedCategory.id);
   }
 
-  async findAll(): Promise<Category[]> {
-    return this.categoriesRepository.find({
-      where: {
-        deletedAt: IsNull(),
+  async findAll(query: QueryCategoryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+
+    const queryBuilder = this.categoriesRepository
+      .createQueryBuilder('category')
+      .leftJoinAndSelect('category.parent', 'parent')
+      .leftJoinAndSelect('category.children', 'children');
+
+    if (query.deletedOnly === true) {
+      queryBuilder.withDeleted().andWhere('category.deletedAt IS NOT NULL');
+    } else {
+      queryBuilder.andWhere('category.deletedAt IS NULL');
+    }
+
+    if (query.keyword?.trim()) {
+      const keyword = `%${query.keyword.trim()}%`;
+
+      queryBuilder.andWhere(
+        `(
+        category.name LIKE :keyword
+        OR category.slug LIKE :keyword
+      )`,
+        { keyword },
+      );
+    }
+
+    queryBuilder.orderBy('category.id', 'ASC').skip(skip).take(limit);
+
+    const [items, total] = await queryBuilder.getManyAndCount();
+
+    return {
+      items,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
       },
-      relations: {
-        parent: true,
-        children: true,
-      },
-      order: {
-        id: 'ASC',
-      },
-    });
+    };
   }
 
   async findOne(id: string): Promise<Category> {

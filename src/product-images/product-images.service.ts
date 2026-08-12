@@ -4,9 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 
 import { Product } from '../products/entities/product.entity';
+import { ProductStatus } from '../products/enums/product-status.enum';
 import { CreateProductImageDto } from './dto/create-product-image.dto';
 import { UpdateProductImageDto } from './dto/update-product-image.dto';
 import { ProductImage } from './entities/product-image.entity';
@@ -46,6 +47,8 @@ export class ProductImagesService {
 
       return await this.dataSource.transaction(async (manager) => {
         const repository = manager.getRepository(ProductImage);
+
+        await this.lockProduct(manager, productId);
 
         const activeImageCount = await repository.count({
           where: {
@@ -101,7 +104,7 @@ export class ProductImagesService {
   }
 
   async findAllByProduct(productId: string): Promise<ProductImage[]> {
-    await this.validateProduct(productId);
+    await this.validateProduct(productId, true);
 
     return this.productImagesRepository.find({
       where: {
@@ -117,6 +120,17 @@ export class ProductImagesService {
   }
 
   async findOne(id: string): Promise<ProductImage> {
+    return this.findImage(id, true);
+  }
+
+  private async findManagedImage(id: string): Promise<ProductImage> {
+    return this.findImage(id, false);
+  }
+
+  private async findImage(
+    id: string,
+    requirePublicProduct: boolean,
+  ): Promise<ProductImage> {
     const productImage = await this.productImagesRepository.findOne({
       where: {
         id,
@@ -127,7 +141,15 @@ export class ProductImagesService {
       },
     });
 
-    if (!productImage) {
+    if (!productImage || !productImage.product) {
+      throw new NotFoundException('Không tìm thấy ảnh sản phẩm');
+    }
+
+    if (
+      requirePublicProduct &&
+      (productImage.product.deletedAt !== null ||
+        productImage.product.status !== ProductStatus.ACTIVE)
+    ) {
       throw new NotFoundException('Không tìm thấy ảnh sản phẩm');
     }
 
@@ -138,10 +160,12 @@ export class ProductImagesService {
     id: string,
     updateProductImageDto: UpdateProductImageDto,
   ): Promise<ProductImage> {
-    const currentImage = await this.findOne(id);
+    const currentImage = await this.findManagedImage(id);
 
     return this.dataSource.transaction(async (manager) => {
       const repository = manager.getRepository(ProductImage);
+
+      await this.lockProduct(manager, currentImage.productId);
 
       const productImage = await repository.findOne({
         where: {
@@ -195,10 +219,12 @@ export class ProductImagesService {
   }
 
   async remove(id: string): Promise<void> {
-    const productImage = await this.findOne(id);
+    const productImage = await this.findManagedImage(id);
 
     await this.dataSource.transaction(async (manager) => {
       const repository = manager.getRepository(ProductImage);
+
+      await this.lockProduct(manager, productImage.productId);
 
       await repository.softRemove(productImage);
 
@@ -267,6 +293,8 @@ export class ProductImagesService {
     return this.dataSource.transaction(async (manager) => {
       const repository = manager.getRepository(ProductImage);
 
+      await this.lockProduct(manager, productImage.productId);
+
       await repository.restore(id);
 
       const restoredImage = await repository.findOne({
@@ -309,35 +337,72 @@ export class ProductImagesService {
   }
 
   async hardDelete(id: string): Promise<void> {
-    const productImage = await this.productImagesRepository.findOne({
+    const currentImage = await this.productImagesRepository.findOne({
       where: {
         id,
       },
       withDeleted: true,
     });
 
-    if (!productImage) {
+    if (!currentImage) {
       throw new NotFoundException('Không tìm thấy ảnh sản phẩm');
     }
 
-    const imageUrls = {
-      originalUrl: productImage.originalUrl,
+    const imageUrls = await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(ProductImage);
 
-      largeUrl: productImage.largeUrl,
+      await this.lockProduct(manager, currentImage.productId, true);
 
-      imageUrl: productImage.imageUrl,
+      const productImage = await repository.findOne({
+        where: { id },
+        withDeleted: true,
+        lock: { mode: 'pessimistic_write' },
+      });
 
-      thumbnailUrl: productImage.thumbnailUrl,
-    };
+      if (!productImage) {
+        throw new NotFoundException('Không tìm thấy ảnh sản phẩm');
+      }
 
-    // Xóa record khỏi DB trước.
-    await this.productImagesRepository.remove(productImage);
+      const urls = {
+        originalUrl: productImage.originalUrl,
+        largeUrl: productImage.largeUrl,
+        imageUrl: productImage.imageUrl,
+        thumbnailUrl: productImage.thumbnailUrl,
+      };
+      const shouldReplacePrimary =
+        productImage.deletedAt === null && productImage.isPrimary;
 
-    // Sau đó xóa toàn bộ file vật lý.
+      await repository.remove(productImage);
+
+      if (shouldReplacePrimary) {
+        const replacementImage = await repository.findOne({
+          where: {
+            productId: productImage.productId,
+            deletedAt: IsNull(),
+          },
+          order: {
+            sortOrder: 'ASC',
+            id: 'ASC',
+          },
+        });
+
+        if (replacementImage) {
+          replacementImage.isPrimary = true;
+          await repository.save(replacementImage);
+        }
+      }
+
+      return urls;
+    });
+
+    // Xóa file vật lý sau khi thay đổi database đã commit thành công.
     await this.imageProcessor.deleteByUrls(imageUrls);
   }
 
-  private async validateProduct(productId: string): Promise<Product> {
+  private async validateProduct(
+    productId: string,
+    requirePublicProduct = false,
+  ): Promise<Product> {
     const product = await this.productsRepository.findOne({
       where: {
         id: productId,
@@ -345,10 +410,32 @@ export class ProductImagesService {
       },
     });
 
-    if (!product) {
+    if (!product || product.deletedAt !== null) {
       throw new NotFoundException('Sản phẩm không tồn tại hoặc đã bị xóa');
     }
 
+    if (requirePublicProduct && product.status !== ProductStatus.ACTIVE) {
+      throw new NotFoundException(
+        'Sản phẩm không tồn tại hoặc chưa được công khai',
+      );
+    }
+
     return product;
+  }
+
+  private async lockProduct(
+    manager: EntityManager,
+    productId: string,
+    allowDeleted = false,
+  ): Promise<void> {
+    const product = await manager.getRepository(Product).findOne({
+      where: { id: productId },
+      withDeleted: true,
+      lock: { mode: 'pessimistic_write' },
+    });
+
+    if (!product || (!allowDeleted && product.deletedAt !== null)) {
+      throw new NotFoundException('Sản phẩm không tồn tại hoặc đã bị xóa');
+    }
   }
 }

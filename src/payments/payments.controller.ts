@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { AuthenticatedRequest } from '../auth/interfaces/authenticated-request.interface';
 
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaymentsService } from './payments.service';
@@ -19,22 +20,25 @@ export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post()
-  create(@Req() request: any, @Body() createPaymentDto: CreatePaymentDto) {
+  create(
+    @Req() request: AuthenticatedRequest,
+    @Body() createPaymentDto: CreatePaymentDto,
+  ) {
     return this.paymentsService.create(request.user.id, createPaymentDto);
   }
 
   @Get(':id')
-  findOne(@Req() request: any, @Param('id') id: string) {
+  findOne(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
     return this.paymentsService.findOne(request.user.id, id);
   }
 
   @Post(':id/confirm')
-  confirm(@Req() request: any, @Param('id') id: string) {
+  confirm(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
     return this.paymentsService.confirm(request.user.id, id);
   }
 
   @Post(':id/fail')
-  fail(@Req() request: any, @Param('id') id: string) {
+  fail(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
     return this.paymentsService.fail(request.user.id, id);
   }
 }

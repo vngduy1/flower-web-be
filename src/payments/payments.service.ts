@@ -17,6 +17,8 @@ import { PaymentRecordStatus } from './enums/payment-record-status.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/enums/notification-type.enum';
 import { EmailsService } from '../emails/emails.service';
+import { ConfigService } from '@nestjs/config';
+import { getDeploymentEnvironment } from '../common/environment';
 
 @Injectable()
 export class PaymentsService {
@@ -27,6 +29,8 @@ export class PaymentsService {
     private readonly notificationsService: NotificationsService,
 
     private readonly emailsService: EmailsService,
+
+    private readonly configService: ConfigService,
 
     private readonly dataSource: DataSource,
   ) {}
@@ -109,6 +113,8 @@ export class PaymentsService {
   }
 
   async confirm(userId: string, paymentId: string) {
+    this.assertMockSettlementAllowed();
+
     const paymentIdAfterConfirm = await this.dataSource.transaction(
       async (manager) => {
         const paymentRepository = manager.getRepository(Payment);
@@ -232,6 +238,8 @@ export class PaymentsService {
   }
 
   async fail(userId: string, paymentId: string) {
+    this.assertMockSettlementAllowed();
+
     const payment = await this.dataSource.transaction(async (manager) => {
       const paymentRepository = manager.getRepository(Payment);
 
@@ -289,6 +297,16 @@ export class PaymentsService {
       createdAt: payment.createdAt,
       updatedAt: payment.updatedAt,
     };
+  }
+
+  private assertMockSettlementAllowed(): void {
+    const environment = getDeploymentEnvironment(this.configService);
+
+    if (environment === 'staging' || environment === 'production') {
+      throw new ConflictException(
+        'Xác nhận thanh toán mô phỏng không được phép trong môi trường này',
+      );
+    }
   }
 
   private generatePaymentNumber(): string {

@@ -20,7 +20,7 @@ export class Inventory {
     type: 'bigint',
     unsigned: true,
   })
-  id: string;
+  id!: string;
 
   @Column({
     name: 'product_id',
@@ -60,7 +60,7 @@ export class Inventory {
     unsigned: true,
     default: 0,
   })
-  reservedQuantity: number;
+  reservedQuantity!: number;
 
   /**
    * Ngưỡng cảnh báo sắp hết hàng.
@@ -71,7 +71,7 @@ export class Inventory {
     unsigned: true,
     default: 5,
   })
-  lowStockThreshold: number;
+  lowStockThreshold!: number;
 
   /**
    * Có quản lý tồn kho hay không.
@@ -84,19 +84,19 @@ export class Inventory {
     type: 'boolean',
     default: true,
   })
-  isStockManaged: boolean;
+  isStockManaged!: boolean;
 
   @CreateDateColumn({
     name: 'created_at',
     type: 'datetime',
   })
-  createdAt: Date;
+  createdAt!: Date;
 
   @UpdateDateColumn({
     name: 'updated_at',
     type: 'datetime',
   })
-  updatedAt: Date;
+  updatedAt!: Date;
 
   /**
    * Số lượng hiện có thể bán.

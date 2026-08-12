@@ -13,6 +13,8 @@ import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { User } from './entities/user.entity';
 import { UserStatus } from './enums/user-status.enum';
+import { PaymentStatus } from '../orders/enums/payment-status.enum';
+import { OrderStatus } from '../orders/enums/order-status.enum';
 
 @Injectable()
 export class AdminUsersService {
@@ -89,7 +91,8 @@ export class AdminUsersService {
     const totalSpent = user.orders
       .filter(
         (order) =>
-          order.paymentStatus === 'PAID' && order.status !== 'CANCELLED',
+          order.paymentStatus === PaymentStatus.PAID &&
+          order.status !== OrderStatus.CANCELLED,
       )
       .reduce((sum, order) => sum + Number(order.totalAmount), 0);
 

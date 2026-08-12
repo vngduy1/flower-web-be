@@ -26,6 +26,7 @@ export class DeliveryAreasService {
       where: {
         prefecture,
         city,
+        areaName,
       },
     });
 
@@ -34,7 +35,6 @@ export class DeliveryAreasService {
         throw new ConflictException('Khu vực giao hàng này đã tồn tại');
       }
 
-      existing.areaName = areaName;
       existing.deliveryFee = dto.deliveryFee.toString();
       existing.isActive = dto.isActive ?? true;
 
@@ -81,6 +81,31 @@ export class DeliveryAreasService {
     return this.buildResponse(deliveryArea);
   }
 
+  async findByAddress(prefecture: string, fullCity: string) {
+    const normalizedPrefecture = prefecture.trim();
+    const normalizedCity = fullCity.trim();
+
+    const areas = await this.deliveryAreaRepository.find({
+      where: {
+        prefecture: normalizedPrefecture,
+        isActive: true,
+      },
+    });
+
+    const matchedArea = areas.find((area) => {
+      const fullAreaName =
+        area.areaName === '全域' ? area.city : `${area.city}${area.areaName}`;
+
+      return fullAreaName === normalizedCity;
+    });
+
+    if (!matchedArea) {
+      return null;
+    }
+
+    return this.buildResponse(matchedArea);
+  }
+
   async update(id: string, dto: UpdateDeliveryAreaDto) {
     const deliveryArea = await this.deliveryAreaRepository.findOne({
       where: {
@@ -93,27 +118,26 @@ export class DeliveryAreasService {
     }
 
     const prefecture = dto.prefecture?.trim() ?? deliveryArea.prefecture;
+
     const city = dto.city?.trim() ?? deliveryArea.city;
 
-    if (prefecture !== deliveryArea.prefecture || city !== deliveryArea.city) {
-      const duplicate = await this.deliveryAreaRepository.findOne({
-        where: {
-          prefecture,
-          city,
-        },
-      });
+    const areaName = dto.areaName?.trim() ?? deliveryArea.areaName;
 
-      if (duplicate && duplicate.id !== id) {
-        throw new ConflictException('Khu vực giao hàng này đã tồn tại');
-      }
+    const duplicate = await this.deliveryAreaRepository.findOne({
+      where: {
+        prefecture,
+        city,
+        areaName,
+      },
+    });
+
+    if (duplicate && duplicate.id !== id) {
+      throw new ConflictException('Khu vực giao hàng này đã tồn tại');
     }
 
     deliveryArea.prefecture = prefecture;
     deliveryArea.city = city;
-
-    if (dto.areaName !== undefined) {
-      deliveryArea.areaName = dto.areaName.trim();
-    }
+    deliveryArea.areaName = areaName;
 
     if (dto.deliveryFee !== undefined) {
       deliveryArea.deliveryFee = dto.deliveryFee.toString();

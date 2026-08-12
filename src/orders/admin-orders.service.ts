@@ -3,18 +3,18 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource } from 'typeorm';
 
 import { AdminOrderQueryDto } from './dto/admin-order-query.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { Order } from './entities/order.entity';
 import { OrderStatusHistory } from './entities/order-status-history.entity';
 import { OrderStatus } from './enums/order-status.enum';
-import { Inventory } from '../inventories/entities/inventory.entity';
 import { PaymentStatus } from './enums/payment-status.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/enums/notification-type.enum';
 import { EmailsService } from '../emails/emails.service';
+import { OrderCancellationService } from './order-cancellation.service';
 
 @Injectable()
 export class AdminOrdersService {
@@ -22,6 +22,7 @@ export class AdminOrdersService {
     private readonly dataSource: DataSource,
     private readonly notificationsService: NotificationsService,
     private readonly emailsService: EmailsService,
+    private readonly orderCancellationService: OrderCancellationService,
   ) {}
 
   async findAll(query: AdminOrderQueryDto) {
@@ -175,27 +176,34 @@ export class AdminOrdersService {
 
         this.validatePaymentStatus(order, dto.status);
 
-        const previousStatus = order.status;
-
         if (dto.status === OrderStatus.CANCELLED) {
-          await this.restoreInventory(manager, order);
+          await this.orderCancellationService.cancel(manager, {
+            order,
+            changedByUserId: adminUserId,
+            reason: dto.note,
+            allowedStatuses: [
+              OrderStatus.PENDING,
+              OrderStatus.CONFIRMED,
+              OrderStatus.PREPARING,
+            ],
+          });
+        } else {
+          const previousStatus = order.status;
+
+          order.status = dto.status;
+          this.applyStatusTimestamp(order, dto.status);
+          await orderRepository.save(order);
+
+          const history = historyRepository.create({
+            orderId: order.id,
+            fromStatus: previousStatus,
+            toStatus: dto.status,
+            changedByUserId: adminUserId,
+            note: dto.note?.trim() || null,
+          });
+
+          await historyRepository.save(history);
         }
-
-        order.status = dto.status;
-
-        this.applyStatusTimestamp(order, dto.status);
-
-        await orderRepository.save(order);
-
-        const history = historyRepository.create({
-          orderId: order.id,
-          fromStatus: previousStatus,
-          toStatus: dto.status,
-          changedByUserId: adminUserId,
-          note: dto.note?.trim() || null,
-        });
-
-        await historyRepository.save(history);
 
         const notificationContent = this.getStatusNotification(
           order,
@@ -446,53 +454,6 @@ export class AdminOrdersService {
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
     };
-  }
-
-  private async restoreInventory(
-    manager: EntityManager,
-    order: Order,
-  ): Promise<void> {
-    const inventoryRepository = manager.getRepository(Inventory);
-
-    for (const item of order.items) {
-      if (!item.productId) {
-        continue;
-      }
-
-      const inventory = await inventoryRepository.findOne({
-        where: {
-          productId: item.productId,
-        },
-        lock: {
-          mode: 'pessimistic_write',
-        },
-      });
-
-      if (!inventory) {
-        throw new NotFoundException(
-          `Không tìm thấy tồn kho của sản phẩm ${item.productId}`,
-        );
-      }
-
-      if (!inventory.isStockManaged) {
-        continue;
-      }
-
-      inventory.stockQuantity += item.quantity;
-
-      await inventoryRepository.save(inventory);
-    }
-  }
-
-  private validateCancellation(order: Order, nextStatus: OrderStatus): void {
-    if (
-      nextStatus === OrderStatus.CANCELLED &&
-      order.paymentStatus === PaymentStatus.PAID
-    ) {
-      throw new ConflictException(
-        'Đơn hàng đã thanh toán cần được hoàn tiền trước khi hủy',
-      );
-    }
   }
 
   private buildOrderDetail(order: Order) {

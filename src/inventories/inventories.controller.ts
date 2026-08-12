@@ -49,7 +49,7 @@ export class InventoriesController {
     @Param('productId')
     productId: string,
   ) {
-    return this.inventoriesService.findByProduct(productId);
+    return this.inventoriesService.findPublicByProduct(productId);
   }
 
   /**

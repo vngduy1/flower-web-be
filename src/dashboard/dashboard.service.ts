@@ -12,6 +12,80 @@ import { User } from '../users/entities/user.entity';
 import { ProductImage } from '../product-images/entities/product-image.entity';
 import { Notification } from '../notifications/entities/notification.entity';
 
+type RawNumber = string | number | null;
+
+interface OrderSummaryRow {
+  total: RawNumber;
+  today: RawNumber;
+  pending: RawNumber;
+  confirmed: RawNumber;
+  preparing: RawNumber;
+  shipped: RawNumber;
+  delivered: RawNumber;
+  cancelled: RawNumber;
+}
+
+interface RevenueRow {
+  revenue: RawNumber;
+}
+
+interface UserSummaryRow {
+  total: RawNumber;
+  newToday: RawNumber;
+  newThisMonth: RawNumber;
+}
+
+interface ProductSummaryRow {
+  total: RawNumber;
+  active: RawNumber;
+}
+
+interface InventorySummaryRow {
+  lowStock: RawNumber;
+  outOfStock: RawNumber;
+}
+
+interface ReviewSummaryRow {
+  pending: RawNumber;
+  approved: RawNumber;
+  rejected: RawNumber;
+}
+
+interface RevenueChartRow {
+  date: string;
+  orderCount: RawNumber;
+  revenue: RawNumber;
+}
+
+interface ProductSalesRow {
+  productId: string | null;
+  productCode: string;
+  productName: string;
+  quantitySold: RawNumber;
+  orderCount: RawNumber;
+  revenue: RawNumber;
+}
+
+interface ProductReviewSummaryRow {
+  productId: string;
+  reviewCount: RawNumber;
+  averageRating: RawNumber;
+}
+
+interface LowStockRow {
+  inventoryId: string;
+  productId: string;
+  productCode: string;
+  productName: string;
+  slug: string;
+  productStatus: string;
+  thumbnailUrl: string | null;
+  stockQuantity: RawNumber;
+  reservedQuantity: RawNumber;
+  availableQuantity: RawNumber;
+  lowStockThreshold: RawNumber;
+}
+
 @Injectable()
 export class DashboardService {
   constructor(private readonly dataSource: DataSource) {}
@@ -94,7 +168,7 @@ export class DashboardService {
         delivered: OrderStatus.DELIVERED,
         cancelled: OrderStatus.CANCELLED,
       })
-      .getRawOne();
+      .getRawOne<OrderSummaryRow>();
 
     return {
       total: Number(raw?.total ?? 0),
@@ -125,7 +199,7 @@ export class DashboardService {
       .andWhere('order.status != :cancelled', {
         cancelled: OrderStatus.CANCELLED,
       })
-      .getRawOne();
+      .getRawOne<RevenueRow>();
 
     return Number(raw?.revenue ?? 0);
   }
@@ -159,7 +233,7 @@ export class DashboardService {
         nextMonthStart,
       })
       .where('user.deleted_at IS NULL')
-      .getRawOne();
+      .getRawOne<UserSummaryRow>();
 
     return {
       total: Number(raw?.total ?? 0),
@@ -180,7 +254,7 @@ export class DashboardService {
         END) AS active`,
       ])
       .where('product.deleted_at IS NULL')
-      .getRawOne();
+      .getRawOne<ProductSummaryRow>();
 
     const inventoryRaw = await this.dataSource
       .getRepository(Inventory)
@@ -207,7 +281,7 @@ export class DashboardService {
           THEN 1 ELSE 0
         END) AS outOfStock`,
       ])
-      .getRawOne();
+      .getRawOne<InventorySummaryRow>();
 
     return {
       total: Number(productRaw?.total ?? 0),
@@ -241,7 +315,7 @@ export class DashboardService {
         approved: ReviewStatus.APPROVED,
         rejected: ReviewStatus.REJECTED,
       })
-      .getRawOne();
+      .getRawOne<ReviewSummaryRow>();
 
     return {
       pending: Number(raw?.pending ?? 0),
@@ -356,7 +430,7 @@ export class DashboardService {
       })
       .groupBy(`DATE(CONVERT_TZ(order.created_at, '+00:00', '+09:00'))`)
       .orderBy('date', 'ASC')
-      .getRawMany();
+      .getRawMany<RevenueChartRow>();
 
     const rowMap = new Map(
       rows.map((row) => [
@@ -426,7 +500,7 @@ export class DashboardService {
       .addGroupBy('item.productName')
       .orderBy('quantitySold', 'DESC')
       .limit(limit)
-      .getRawMany();
+      .getRawMany<ProductSalesRow>();
 
     const productIds = salesRows
       .map((row) => row.productId)
@@ -448,7 +522,7 @@ export class DashboardService {
             })
             .andWhere('review.deletedAt IS NULL')
             .groupBy('review.productId')
-            .getRawMany()
+            .getRawMany<ProductReviewSummaryRow>()
         : [];
 
     const reviewMap = new Map(
@@ -543,7 +617,7 @@ export class DashboardService {
       )
       .addOrderBy('product.name', 'ASC')
       .limit(limit)
-      .getRawMany();
+      .getRawMany<LowStockRow>();
 
     return {
       items: rows.map((row) => {

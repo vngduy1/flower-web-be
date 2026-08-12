@@ -7,11 +7,11 @@ export class CreateCategoryDto {
 
   @IsString()
   @Length(1, 100)
-  name: string;
+  name!: string;
 
   @IsString()
   @Length(1, 120)
-  slug: string;
+  slug!: string;
 
   @IsOptional()
   @IsBoolean()

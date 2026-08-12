@@ -138,15 +138,6 @@ export class ReviewsService {
 
       const saved = await reviewRepository.save(review);
 
-      await this.notificationsService.createWithManager(manager, {
-        userId: review.userId,
-        type: NotificationType.REVIEW_APPROVED,
-        title: 'Đánh giá đã được duyệt',
-        message: 'Đánh giá sản phẩm của bạn đã được duyệt.',
-        referenceType: 'REVIEW',
-        referenceId: review.id,
-      });
-
       return saved.id;
     });
 

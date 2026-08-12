@@ -749,6 +749,21 @@ export class CouponsService {
     OR coupon.used_count < coupon.usage_limit
   )`,
       )
+      .andWhere(
+        `(
+    coupon.per_user_limit IS NULL
+    OR (
+      SELECT COUNT(cu.id)
+      FROM coupon_usages cu
+      WHERE cu.coupon_id = coupon.id
+        AND cu.user_id = :availableCouponUserId
+        AND cu.is_reversed = false
+    ) < coupon.per_user_limit
+  )`,
+        {
+          availableCouponUserId: userId,
+        },
+      )
       .orderBy('coupon.endsAt', 'ASC')
       .addOrderBy('coupon.id', 'ASC')
       .skip(skip)
@@ -762,8 +777,8 @@ export class CouponsService {
         pagination: {
           page,
           limit,
-          total: 0,
-          totalPages: 0,
+          total,
+          totalPages: Math.ceil(total / limit),
         },
       };
     }

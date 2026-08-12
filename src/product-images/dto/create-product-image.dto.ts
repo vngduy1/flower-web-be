@@ -23,7 +23,7 @@ export class CreateProductImageDto {
   sortOrder?: number;
 
   @IsOptional()
-  @Transform(({ value }) => {
+  @Transform(({ value }: { value: unknown }) => {
     if (value === true || value === 'true') {
       return true;
     }

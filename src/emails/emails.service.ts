@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import nodemailer, { Transporter } from 'nodemailer';
+import SMTPTransport from 'nodemailer/lib/smtp-transport';
 
 import { SendEmailOptions } from './interfaces/send-email-options.interface';
 
@@ -8,7 +9,7 @@ import { SendEmailOptions } from './interfaces/send-email-options.interface';
 export class EmailsService implements OnModuleInit {
   private readonly logger = new Logger(EmailsService.name);
 
-  private transporter!: Transporter;
+  private transporter!: Transporter<SMTPTransport.SentMessageInfo>;
 
   constructor(private readonly configService: ConfigService) {}
 
@@ -52,11 +53,12 @@ export class EmailsService implements OnModuleInit {
    * Order hoặc Payment không nên rollback chỉ vì SMTP lỗi.
    */
   async send(options: SendEmailOptions): Promise<boolean> {
+    const recipients = this.formatRecipients(options.to);
     const enabled =
       this.configService.get<string>('MAIL_ENABLED', 'false') === 'true';
 
     if (!enabled) {
-      this.logger.debug(`Email disabled: ${options.subject} -> ${options.to}`);
+      this.logger.debug(`Email disabled: ${options.subject} -> ${recipients}`);
 
       return false;
     }
@@ -65,7 +67,7 @@ export class EmailsService implements OnModuleInit {
 
     if (!host) {
       this.logger.warn(
-        `Không gửi email vì MAIL_HOST chưa được cấu hình: ${options.to}`,
+        `Không gửi email vì MAIL_HOST chưa được cấu hình: ${recipients}`,
       );
 
       return false;
@@ -94,7 +96,7 @@ export class EmailsService implements OnModuleInit {
       });
 
       this.logger.log(
-        `Email sent: messageId=${result.messageId}, to=${options.to}, reference=${options.referenceType ?? '-'}:${options.referenceId ?? '-'}`,
+        `Email sent: messageId=${result.messageId}, to=${recipients}, reference=${options.referenceType ?? '-'}:${options.referenceId ?? '-'}`,
       );
 
       return true;
@@ -102,11 +104,15 @@ export class EmailsService implements OnModuleInit {
       const message = error instanceof Error ? error.message : String(error);
 
       this.logger.error(
-        `Email send failed: to=${options.to}, subject=${options.subject}, error=${message}`,
+        `Email send failed: to=${recipients}, subject=${options.subject}, error=${message}`,
       );
 
       return false;
     }
+  }
+
+  private formatRecipients(recipients: string | string[]): string {
+    return Array.isArray(recipients) ? recipients.join(', ') : recipients;
   }
 
   /**

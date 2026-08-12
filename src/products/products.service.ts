@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, IsNull, Repository } from 'typeorm';
+import { DataSource, Brackets, IsNull, Repository } from 'typeorm';
 
 import { Category } from '../categories/entities/category.entity';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -12,6 +12,7 @@ import { QueryProductDto } from './dto/query-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { Product } from './entities/product.entity';
 import { ProductStatus } from './enums/product-status.enum';
+import { Inventory } from '../inventories/entities/inventory.entity';
 
 @Injectable()
 export class ProductsService {
@@ -21,6 +22,8 @@ export class ProductsService {
 
     @InjectRepository(Category)
     private readonly categoriesRepository: Repository<Category>,
+
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(createProductDto: CreateProductDto): Promise<Product> {
@@ -43,29 +46,47 @@ export class ProductsService {
       createProductDto.availableUntil,
     );
 
-    const product = this.productsRepository.create({
-      productCode,
-      name: createProductDto.name.trim(),
-      slug,
-      categoryId: createProductDto.categoryId,
-      description: createProductDto.description?.trim() || null,
-      basePrice: createProductDto.basePrice,
-      salePrice: createProductDto.salePrice ?? null,
-      costPrice: createProductDto.costPrice ?? null,
-      status: createProductDto.status ?? ProductStatus.DRAFT,
-      isFeatured: createProductDto.isFeatured ?? false,
-      availableFrom: createProductDto.availableFrom
-        ? new Date(createProductDto.availableFrom)
-        : null,
-      availableUntil: createProductDto.availableUntil
-        ? new Date(createProductDto.availableUntil)
-        : null,
-      preparationDays: createProductDto.preparationDays ?? 0,
-    });
+    const savedProductId = await this.dataSource.transaction(
+      async (manager) => {
+        const productRepository = manager.getRepository(Product);
+        const inventoryRepository = manager.getRepository(Inventory);
 
-    const savedProduct = await this.productsRepository.save(product);
+        const product = productRepository.create({
+          productCode,
+          name: createProductDto.name.trim(),
+          slug,
+          categoryId: createProductDto.categoryId,
+          description: createProductDto.description?.trim() || null,
+          basePrice: createProductDto.basePrice,
+          salePrice: createProductDto.salePrice ?? null,
+          costPrice: createProductDto.costPrice ?? null,
+          status: createProductDto.status ?? ProductStatus.DRAFT,
+          isFeatured: createProductDto.isFeatured ?? false,
+          availableFrom: createProductDto.availableFrom
+            ? new Date(createProductDto.availableFrom)
+            : null,
+          availableUntil: createProductDto.availableUntil
+            ? new Date(createProductDto.availableUntil)
+            : null,
+          preparationDays: createProductDto.preparationDays ?? 0,
+        });
 
-    return this.findOne(savedProduct.id);
+        const savedProduct = await productRepository.save(product);
+
+        const inventory = inventoryRepository.create({
+          productId: savedProduct.id,
+          stockQuantity: 0,
+          reservedQuantity: 0,
+          isStockManaged: true,
+        });
+
+        await inventoryRepository.save(inventory);
+
+        return savedProduct.id;
+      },
+    );
+
+    return this.findManagedProduct(savedProductId);
   }
 
   async findAll(query: QueryProductDto) {
@@ -76,7 +97,10 @@ export class ProductsService {
     const queryBuilder = this.productsRepository
       .createQueryBuilder('product')
       .leftJoinAndSelect('product.category', 'category')
-      .where('product.deletedAt IS NULL');
+      .where('product.deletedAt IS NULL')
+      .andWhere('product.status = :publicStatus', {
+        publicStatus: ProductStatus.ACTIVE,
+      });
 
     if (query.keyword?.trim()) {
       const keyword = `%${query.keyword.trim()}%`;
@@ -91,14 +115,30 @@ export class ProductsService {
     }
 
     if (query.categoryId) {
-      queryBuilder.andWhere('product.categoryId = :categoryId', {
-        categoryId: query.categoryId,
+      const category = await this.categoriesRepository.findOne({
+        where: {
+          id: query.categoryId,
+          deletedAt: IsNull(),
+          isActive: true,
+        },
+        relations: {
+          children: true,
+        },
       });
-    }
 
-    if (query.status) {
-      queryBuilder.andWhere('product.status = :status', {
-        status: query.status,
+      if (!category) {
+        throw new NotFoundException('Không tìm thấy danh mục');
+      }
+
+      const categoryIds = [
+        category.id,
+        ...category.children
+          .filter((child) => child.isActive && !child.deletedAt)
+          .map((child) => child.id),
+      ];
+
+      queryBuilder.andWhere('product.categoryId IN (:...categoryIds)', {
+        categoryIds,
       });
     }
 
@@ -127,6 +167,7 @@ export class ProductsService {
     const product = await this.productsRepository.findOne({
       where: {
         id,
+        status: ProductStatus.ACTIVE,
         deletedAt: IsNull(),
       },
       relations: {
@@ -145,7 +186,7 @@ export class ProductsService {
     id: string,
     updateProductDto: UpdateProductDto,
   ): Promise<Product> {
-    const product = await this.findOne(id);
+    const product = await this.findManagedProduct(id);
 
     if (updateProductDto.productCode !== undefined) {
       const productCode = this.normalizeProductCode(
@@ -243,11 +284,11 @@ export class ProductsService {
 
     await this.productsRepository.save(product);
 
-    return this.findOne(id);
+    return this.findManagedProduct(id);
   }
 
   async remove(id: string): Promise<void> {
-    const product = await this.findOne(id);
+    const product = await this.findManagedProduct(id);
 
     await this.productsRepository.softRemove(product);
   }
@@ -270,7 +311,20 @@ export class ProductsService {
 
     await this.productsRepository.restore(id);
 
-    return this.findOne(id);
+    return this.findManagedProduct(id);
+  }
+
+  private async findManagedProduct(id: string): Promise<Product> {
+    const product = await this.productsRepository.findOne({
+      where: { id, deletedAt: IsNull() },
+      relations: { category: true },
+    });
+
+    if (!product) {
+      throw new NotFoundException('Không tìm thấy sản phẩm');
+    }
+
+    return product;
   }
 
   private async validateCategory(categoryId: string): Promise<Category> {

@@ -26,6 +26,9 @@ import { Coupon } from '../../coupons/entities/coupon.entity';
 @Index('idx_orders_status', ['status'])
 @Index('idx_orders_payment_status', ['paymentStatus'])
 @Index('idx_orders_created_at', ['createdAt'])
+@Index('uq_orders_user_idempotency_key', ['userId', 'idempotencyKey'], {
+  unique: true,
+})
 export class Order {
   @PrimaryGeneratedColumn({
     type: 'bigint',
@@ -47,6 +50,22 @@ export class Order {
     unsigned: true,
   })
   userId: string;
+
+  @Column({
+    name: 'idempotency_key',
+    type: 'varchar',
+    length: 128,
+    nullable: true,
+  })
+  idempotencyKey!: string | null;
+
+  @Column({
+    name: 'idempotency_fingerprint',
+    type: 'char',
+    length: 64,
+    nullable: true,
+  })
+  idempotencyFingerprint!: string | null;
 
   @ManyToOne(() => User, (user) => user.orders, {
     nullable: false,

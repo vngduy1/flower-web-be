@@ -3,10 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, IsNull } from 'typeorm';
-
-import { Inventory } from '../inventories/entities/inventory.entity';
-import { ProductImage } from '../product-images/entities/product-image.entity';
+import { DataSource, IsNull, SelectQueryBuilder } from 'typeorm';
 
 import { AdminProductQueryDto } from './dto/admin-product-query.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
@@ -25,15 +22,12 @@ export class AdminProductsService {
       .getRepository(Product)
       .createQueryBuilder('product')
       .leftJoinAndSelect('product.category', 'category')
-      .leftJoin(Inventory, 'inventory', 'inventory.product_id = product.id')
-      .leftJoin(
-        ProductImage,
+      .leftJoinAndSelect('product.inventory', 'inventory')
+      .leftJoinAndSelect(
+        'product.images',
         'image',
-        `
-          image.product_id = product.id
-          AND image.is_primary = true
-          AND image.deleted_at IS NULL
-        `,
+        'image.isPrimary = :isPrimary',
+        { isPrimary: true },
       )
       .select([
         'product.id',
@@ -48,6 +42,7 @@ export class AdminProductsService {
         'product.availableUntil',
         'product.createdAt',
         'product.updatedAt',
+        'product.deletedAt',
 
         'category.id',
         'category.name',
@@ -60,9 +55,18 @@ export class AdminProductsService {
         'inventory.isStockManaged',
 
         'image.id',
+        'image.imageUrl',
         'image.thumbnailUrl',
-      ])
-      .where('product.deletedAt IS NULL');
+        'image.isPrimary',
+        'image.sortOrder',
+        'image.deletedAt',
+      ]);
+
+    if (query.deletedOnly === true) {
+      queryBuilder.withDeleted().andWhere('product.deletedAt IS NOT NULL');
+    } else {
+      queryBuilder.andWhere('product.deletedAt IS NULL');
+    }
 
     if (query.keyword?.trim()) {
       queryBuilder.andWhere(
@@ -223,7 +227,7 @@ export class AdminProductsService {
   }
 
   private applySorting(
-    queryBuilder: any,
+    queryBuilder: SelectQueryBuilder<Product>,
     sortBy: AdminProductQueryDto['sortBy'],
     sortOrder: AdminProductQueryDto['sortOrder'],
   ): void {
@@ -314,12 +318,33 @@ export class AdminProductsService {
 
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
+      deletedAt: product.deletedAt,
     };
   }
 
   private buildProductDetail(product: Product) {
     return {
       ...this.buildProductSummary(product),
+
+      product: {
+        id: product.id,
+        productCode: product.productCode,
+        name: product.name,
+        slug: product.slug,
+        categoryId: product.categoryId,
+        category: product.category,
+        description: product.description,
+        basePrice: product.basePrice,
+        salePrice: product.salePrice,
+        status: product.status,
+        isFeatured: product.isFeatured,
+        availableFrom: product.availableFrom,
+        availableUntil: product.availableUntil,
+        preparationDays: product.preparationDays,
+        createdAt: product.createdAt,
+        updatedAt: product.updatedAt,
+        deletedAt: product.deletedAt,
+      },
 
       images:
         product.images

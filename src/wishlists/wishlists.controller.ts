@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { AuthenticatedRequest } from '../auth/interfaces/authenticated-request.interface';
 
 import { WishlistsService } from './wishlists.service';
 import { WishlistProductParamDto } from './dto/wishlist-product-param.dto';
@@ -22,7 +23,10 @@ export class WishlistsController {
    * POST /api/wishlist/:productId
    */
   @Post(':productId')
-  add(@Req() request: any, @Param() params: WishlistProductParamDto) {
+  add(
+    @Req() request: AuthenticatedRequest,
+    @Param() params: WishlistProductParamDto,
+  ) {
     return this.wishlistsService.add(request.user.id, params.productId);
   }
 
@@ -30,7 +34,7 @@ export class WishlistsController {
    * GET /api/wishlist
    */
   @Get()
-  findAll(@Req() request: any) {
+  findAll(@Req() request: AuthenticatedRequest) {
     return this.wishlistsService.findAll(request.user.id);
   }
 
@@ -38,7 +42,10 @@ export class WishlistsController {
    * GET /api/wishlist/:productId/check
    */
   @Get(':productId/check')
-  check(@Req() request: any, @Param() params: WishlistProductParamDto) {
+  check(
+    @Req() request: AuthenticatedRequest,
+    @Param() params: WishlistProductParamDto,
+  ) {
     return this.wishlistsService.check(request.user.id, params.productId);
   }
 
@@ -46,7 +53,10 @@ export class WishlistsController {
    * DELETE /api/wishlist/:productId
    */
   @Delete(':productId')
-  remove(@Req() request: any, @Param() params: WishlistProductParamDto) {
+  remove(
+    @Req() request: AuthenticatedRequest,
+    @Param() params: WishlistProductParamDto,
+  ) {
     return this.wishlistsService.remove(request.user.id, params.productId);
   }
 }

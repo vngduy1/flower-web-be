@@ -11,6 +11,7 @@ import { DeliveryArea } from './entities/delivery-area.entity';
 import { DeliveryBlackoutDate } from './entities/delivery-blackout-date.entity';
 import { DeliveryCapacity } from './entities/delivery-capacity.entity';
 import { DeliveryTimeSlot } from './entities/delivery-time-slot.entity';
+import { DeliveryAreasService } from './delivery-areas.service';
 
 @Injectable()
 export class DeliveryAvailabilityService {
@@ -26,6 +27,8 @@ export class DeliveryAvailabilityService {
 
     @InjectRepository(DeliveryTimeSlot)
     private readonly timeSlotRepository: Repository<DeliveryTimeSlot>,
+
+    private readonly deliveryAreasService: DeliveryAreasService,
   ) {}
 
   /**
@@ -163,7 +166,15 @@ export class DeliveryAvailabilityService {
   }
 
   /**
-   * Lấy phí giao hàng theo tỉnh/thành và thành phố/quận.
+   * Lấy phí giao hàng theo địa chỉ.
+   *
+   * Ví dụ:
+   * prefecture = 神奈川県
+   * city       = 川崎市幸区
+   *
+   * delivery_areas:
+   * city       = 川崎市
+   * area_name  = 幸区
    */
   async getDeliveryFee(prefecture: string, city: string) {
     const normalizedPrefecture = prefecture?.trim();
@@ -177,16 +188,18 @@ export class DeliveryAvailabilityService {
       throw new BadRequestException('city là bắt buộc');
     }
 
-    const area = await this.deliveryAreaRepository.findOne({
-      where: {
-        prefecture: normalizedPrefecture,
-        city: normalizedCity,
-        isActive: true,
-      },
-    });
+    const area = await this.deliveryAreasService.findByAddress(
+      normalizedPrefecture,
+      normalizedCity,
+    );
 
     if (!area) {
-      throw new NotFoundException('Địa chỉ này chưa được hỗ trợ giao hàng');
+      return {
+        supported: false,
+        prefecture: normalizedPrefecture,
+        city: normalizedCity,
+        deliveryFee: null,
+      };
     }
 
     return {
@@ -195,7 +208,7 @@ export class DeliveryAvailabilityService {
       prefecture: area.prefecture,
       city: area.city,
       areaName: area.areaName,
-      deliveryFee: Number(area.deliveryFee),
+      deliveryFee: area.deliveryFee,
     };
   }
 
@@ -229,16 +242,39 @@ export class DeliveryAvailabilityService {
 
     const capacityRepository = manager.getRepository(DeliveryCapacity);
 
-    const area = await areaRepository.findOne({
+    const normalizedPrefecture = prefecture.trim();
+    const normalizedCity = city.trim();
+
+    const areas = await areaRepository.find({
       where: {
-        prefecture: prefecture.trim(),
-        city: city.trim(),
+        prefecture: normalizedPrefecture,
         isActive: true,
       },
     });
 
+    const area = areas
+      .filter((candidate) => {
+        const areaCity = candidate.city.trim();
+        const areaName = candidate.areaName?.trim() ?? '';
+
+        // Ví dụ:
+        // 川崎市 + 幸区 = 川崎市幸区
+        const fullAreaName = `${areaCity}${areaName}`;
+
+        return normalizedCity === fullAreaName || normalizedCity === areaCity;
+      })
+      .sort((a, b) => {
+        const aLength = a.city.length + (a.areaName?.length ?? 0);
+
+        const bLength = b.city.length + (b.areaName?.length ?? 0);
+
+        return bLength - aLength;
+      })[0];
+
     if (!area) {
-      throw new ConflictException('Địa chỉ này chưa được hỗ trợ giao hàng');
+      throw new ConflictException(
+        '選択されたお届け先は、現在配送対象エリア外です。',
+      );
     }
 
     const blackoutDate = await blackoutRepository.findOne({

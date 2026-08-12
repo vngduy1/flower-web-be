@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 
 import { Product } from '../products/entities/product.entity';
+import { ProductStatus } from '../products/enums/product-status.enum';
 import { ProductImage } from '../product-images/entities/product-image.entity';
 
 import { WishlistItem } from './entities/wishlist-item.entity';
@@ -36,7 +37,7 @@ export class WishlistsService {
       throw new NotFoundException('Sản phẩm không tồn tại hoặc đã bị xóa');
     }
 
-    if (product.status !== 'ACTIVE') {
+    if (product.status !== ProductStatus.ACTIVE) {
       throw new ConflictException('Sản phẩm hiện không được phép bán');
     }
 
@@ -120,7 +121,8 @@ export class WishlistsService {
           currentPrice,
           status: product.status,
           isAvailable:
-            product.status === 'ACTIVE' && product.deletedAt === null,
+            product.status === ProductStatus.ACTIVE &&
+            product.deletedAt === null,
         },
         createdAt: item.createdAt,
       };

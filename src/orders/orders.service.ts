@@ -5,15 +5,24 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { randomUUID } from 'crypto';
-import { DataSource, Repository } from 'typeorm';
+import { createHash, randomUUID } from 'crypto';
+import {
+  DataSource,
+  EntityManager,
+  In,
+  QueryFailedError,
+  Repository,
+} from 'typeorm';
 
-import { AddressesService } from '../addresses/addresses.service';
+import { UserAddress } from '../addresses/entities/user-address.entity';
+import { Cart } from '../carts/entities/cart.entity';
 import { CartItem } from '../carts/entities/cart-item.entity';
-import { CartsService } from '../carts/carts.service';
+import type { CartData, CartDataItem } from '../carts/carts.service';
 import { DEFAULT_CURRENCY } from '../common/constants/currency.constant';
 import { Inventory } from '../inventories/entities/inventory.entity';
-import { EntityManager } from 'typeorm';
+import { ProductImage } from '../product-images/entities/product-image.entity';
+import { Product } from '../products/entities/product.entity';
+import { ProductStatus } from '../products/enums/product-status.enum';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderAddress } from './entities/order-address.entity';
 import { OrderItem } from './entities/order-item.entity';
@@ -26,7 +35,7 @@ import { Coupon } from '../coupons/entities/coupon.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/enums/notification-type.enum';
 import { EmailsService } from '../emails/emails.service';
-import { OrderStatusHistory } from './entities/order-status-history.entity';
+import { OrderCancellationService } from './order-cancellation.service';
 
 @Injectable()
 export class OrdersService {
@@ -34,12 +43,11 @@ export class OrdersService {
     @InjectRepository(Order)
     private readonly ordersRepository: Repository<Order>,
 
-    private readonly cartsService: CartsService,
-    private readonly addressesService: AddressesService,
     private readonly deliveryAvailabilityService: DeliveryAvailabilityService,
     private readonly couponsService: CouponsService,
     private readonly notificationsService: NotificationsService,
     private readonly emailsService: EmailsService,
+    private readonly orderCancellationService: OrderCancellationService,
 
     private readonly dataSource: DataSource,
   ) {}
@@ -47,272 +55,324 @@ export class OrdersService {
   /**
    * Tạo đơn hàng từ giỏ hàng hiện tại của người dùng.
    */
-  async create(userId: string, dto: CreateOrderDto) {
+  async create(
+    userId: string,
+    dto: CreateOrderDto,
+    rawIdempotencyKey?: string,
+  ) {
     this.validateDeliveryDate(dto.deliveryDate);
 
-    /*
-     * Chỉ lấy được địa chỉ thuộc user hiện tại.
-     * Nếu địa chỉ không tồn tại hoặc thuộc user khác,
-     * AddressesService sẽ trả về 404.
-     */
-    const address = await this.addressesService.findOne(userId, dto.addressId);
+    const idempotencyKey = this.normalizeIdempotencyKey(rawIdempotencyKey);
+    const idempotencyFingerprint = idempotencyKey
+      ? this.createIdempotencyFingerprint(dto)
+      : null;
 
-    /*
-     * Lấy dữ liệu giỏ hàng để kiểm tra sơ bộ.
-     */
-    const cartData = await this.cartsService.getCartData(userId);
+    if (idempotencyKey && idempotencyFingerprint) {
+      const existingOrder = await this.ordersRepository.findOne({
+        where: { userId, idempotencyKey },
+      });
 
-    if (cartData.items.length === 0) {
-      throw new BadRequestException('Giỏ hàng đang trống');
+      if (existingOrder) {
+        this.validateIdempotencyFingerprint(
+          existingOrder,
+          idempotencyFingerprint,
+        );
+
+        return this.findOne(userId, existingOrder.id);
+      }
     }
 
-    /*
-     * Kiểm tra sản phẩm đang ngừng bán,
-     * bị xóa hoặc không đủ tồn kho.
-     */
-    const unavailableItems = cartData.items.filter((item) => !item.isAvailable);
+    let creationResult: { orderId: string; created: boolean };
 
-    if (unavailableItems.length > 0) {
-      throw new ConflictException(
-        'Có sản phẩm không còn khả dụng hoặc không đủ tồn kho',
-      );
-    }
+    try {
+      creationResult = await this.dataSource.transaction(async (manager) => {
+        const orderRepository = manager.getRepository(Order);
+        const orderItemRepository = manager.getRepository(OrderItem);
+        const orderAddressRepository = manager.getRepository(OrderAddress);
+        const inventoryRepository = manager.getRepository(Inventory);
+        const cartItemRepository = manager.getRepository(CartItem);
 
-    /*
-     * Không tạo đơn bằng mức giá cũ đã lưu trong cart.
-     * Người dùng cần kiểm tra lại giỏ hàng trước khi đặt hàng.
-     */
-    const priceChangedItems = cartData.items.filter(
-      (item) => item.priceChanged,
-    );
+        const cart = await this.lockCart(manager, userId);
 
-    if (priceChangedItems.length > 0) {
-      throw new ConflictException(
-        'Giá sản phẩm đã thay đổi. Vui lòng kiểm tra lại giỏ hàng',
-      );
-    }
+        if (idempotencyKey && idempotencyFingerprint) {
+          const existingOrder = await orderRepository.findOne({
+            where: { userId, idempotencyKey },
+            lock: { mode: 'pessimistic_write' },
+          });
 
-    const subtotal = cartData.subtotal;
-
-    const orderId = await this.dataSource.transaction(async (manager) => {
-      const orderRepository = manager.getRepository(Order);
-      const orderItemRepository = manager.getRepository(OrderItem);
-      const orderAddressRepository = manager.getRepository(OrderAddress);
-      const inventoryRepository = manager.getRepository(Inventory);
-      const cartItemRepository = manager.getRepository(CartItem);
-
-      /*
-       * Lưu các Inventory đã khóa.
-       *
-       * Sau khi kiểm tra tồn kho, chính những entity này
-       * sẽ được sử dụng để trừ tồn kho.
-       */
-      const lockedInventories = new Map<string, Inventory>();
-
-      /*
-       * Khóa inventory theo từng sản phẩm để ngăn hai request
-       * đồng thời cùng mua số lượng tồn kho cuối cùng.
-       */
-      for (const item of cartData.items) {
-        const inventory = await inventoryRepository.findOne({
-          where: {
-            productId: item.product.id,
-          },
-          lock: {
-            mode: 'pessimistic_write',
-          },
-        });
-
-        if (!inventory) {
-          throw new ConflictException(
-            `Sản phẩm ${item.product.name} chưa có thông tin tồn kho`,
-          );
-        }
-
-        if (inventory.isStockManaged) {
-          const availableQuantity =
-            inventory.stockQuantity - inventory.reservedQuantity;
-
-          if (item.cartItem.quantity > availableQuantity) {
-            throw new ConflictException(
-              `Sản phẩm ${item.product.name} không đủ tồn kho`,
+          if (existingOrder) {
+            this.validateIdempotencyFingerprint(
+              existingOrder,
+              idempotencyFingerprint,
             );
+
+            return { orderId: existingOrder.id, created: false };
           }
         }
 
-        lockedInventories.set(item.product.id, inventory);
-      }
-
-      const deliverySelection =
-        await this.deliveryAvailabilityService.validateDeliverySelection(
+        const { address, cartData } = await this.loadCheckoutData(
           manager,
-          address.prefecture,
-          address.city,
+          userId,
+          dto.addressId,
+          cart,
+        );
+
+        this.validateCheckoutCart(cartData);
+
+        const subtotal = cartData.subtotal;
+
+        /*
+         * Lưu các Inventory đã khóa.
+         *
+         * Sau khi kiểm tra tồn kho, chính những entity này
+         * sẽ được sử dụng để trừ tồn kho.
+         */
+        const lockedInventories = new Map<string, Inventory>();
+
+        /*
+         * Khóa inventory theo từng sản phẩm để ngăn hai request
+         * đồng thời cùng mua số lượng tồn kho cuối cùng.
+         */
+        const inventoryLockOrder = [...cartData.items].sort((left, right) => {
+          const leftId = BigInt(left.product.id);
+          const rightId = BigInt(right.product.id);
+
+          return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+        });
+
+        for (const item of inventoryLockOrder) {
+          const inventory = await inventoryRepository.findOne({
+            where: {
+              productId: item.product.id,
+            },
+            lock: {
+              mode: 'pessimistic_write',
+            },
+          });
+
+          if (!inventory) {
+            throw new ConflictException(
+              `Sản phẩm ${item.product.name} chưa có thông tin tồn kho`,
+            );
+          }
+
+          if (inventory.isStockManaged) {
+            const availableQuantity =
+              inventory.stockQuantity - inventory.reservedQuantity;
+
+            if (item.cartItem.quantity > availableQuantity) {
+              throw new ConflictException(
+                `Sản phẩm ${item.product.name} không đủ tồn kho`,
+              );
+            }
+          }
+
+          lockedInventories.set(item.product.id, inventory);
+        }
+
+        const deliverySelection =
+          await this.deliveryAvailabilityService.validateDeliverySelection(
+            manager,
+            address.prefecture,
+            address.city,
+            dto.deliveryDate,
+            dto.timeSlotId,
+          );
+
+        let appliedCoupon: Coupon | null = null;
+        let discountAmount = 0;
+
+        if (dto.couponCode?.trim()) {
+          const couponResult = await this.couponsService.applyCouponForOrder(
+            manager,
+            userId,
+            dto.couponCode,
+            subtotal,
+          );
+
+          appliedCoupon = couponResult.coupon;
+          discountAmount = couponResult.discountAmount;
+        }
+
+        const deliveryFee = deliverySelection.deliveryFee;
+
+        const totalAmount = Math.max(
+          subtotal + deliveryFee - discountAmount,
+          0,
+        );
+
+        await this.deliveryAvailabilityService.reserveCapacity(
+          manager,
           dto.deliveryDate,
           dto.timeSlotId,
         );
 
-      let appliedCoupon: Coupon | null = null;
-      let discountAmount = 0;
+        /*
+         * Tạo Order.
+         */
+        const order = orderRepository.create({
+          orderNumber: this.generateOrderNumber(),
 
-      if (dto.couponCode?.trim()) {
-        const couponResult = await this.couponsService.applyCouponForOrder(
-          manager,
           userId,
-          dto.couponCode,
-          subtotal,
-        );
 
-        appliedCoupon = couponResult.coupon;
-        discountAmount = couponResult.discountAmount;
-      }
+          status: OrderStatus.PENDING,
 
-      const deliveryFee = deliverySelection.deliveryFee;
+          paymentStatus: PaymentStatus.UNPAID,
 
-      const totalAmount = Math.max(subtotal + deliveryFee - discountAmount, 0);
+          subtotal: subtotal.toFixed(2),
 
-      await this.deliveryAvailabilityService.reserveCapacity(
-        manager,
-        dto.deliveryDate,
-        dto.timeSlotId,
-      );
+          deliveryFee: deliveryFee.toFixed(2),
 
-      /*
-       * Tạo Order.
-       */
-      const order = orderRepository.create({
-        orderNumber: this.generateOrderNumber(),
+          discountAmount: discountAmount.toFixed(2),
 
-        userId,
+          totalAmount: totalAmount.toFixed(2),
 
-        status: OrderStatus.PENDING,
+          currencyCode: DEFAULT_CURRENCY.code,
 
-        paymentStatus: PaymentStatus.UNPAID,
+          couponId: appliedCoupon?.id ?? null,
 
-        subtotal: subtotal.toFixed(2),
+          couponCode: appliedCoupon?.code ?? null,
 
-        deliveryFee: deliveryFee.toFixed(2),
+          couponName: appliedCoupon?.name ?? null,
 
-        discountAmount: discountAmount.toFixed(2),
+          deliveryDate: dto.deliveryDate,
 
-        totalAmount: totalAmount.toFixed(2),
+          deliveryTimeSlotId: deliverySelection.timeSlot.id,
 
-        currencyCode: DEFAULT_CURRENCY.code,
+          deliveryTimeSlot: deliverySelection.timeSlot.displayName,
 
-        couponId: appliedCoupon?.id ?? null,
+          note: dto.note?.trim() || null,
 
-        couponCode: appliedCoupon?.code ?? null,
+          idempotencyKey,
 
-        couponName: appliedCoupon?.name ?? null,
-
-        deliveryDate: dto.deliveryDate,
-
-        deliveryTimeSlotId: deliverySelection.timeSlot.id,
-
-        deliveryTimeSlot: deliverySelection.timeSlot.displayName,
-
-        note: dto.note?.trim() || null,
-      });
-
-      const savedOrder = await orderRepository.save(order);
-
-      if (appliedCoupon) {
-        await this.couponsService.recordCouponUsage(manager, {
-          coupon: appliedCoupon,
-          userId,
-          orderId: savedOrder.id,
-          discountAmount,
+          idempotencyFingerprint,
         });
-      }
 
-      /*
-       * Tạo snapshot của các sản phẩm trong đơn hàng.
-       */
-      const orderItems = cartData.items.map((item) => {
-        return orderItemRepository.create({
-          orderId: savedOrder.id,
+        const savedOrder = await orderRepository.save(order);
 
-          productId: item.product.id,
-
-          productCode: item.product.productCode,
-
-          productName: item.product.name,
-
-          thumbnailUrl: item.primaryImage?.thumbnailUrl ?? null,
-
-          unitPrice: item.currentUnitPrice.toFixed(2),
-
-          quantity: item.cartItem.quantity,
-
-          subtotal: item.subtotal.toFixed(2),
-        });
-      });
-
-      await orderItemRepository.save(orderItems);
-
-      /*
-       * Tạo snapshot địa chỉ giao hàng.
-       *
-       * Sau khi đặt hàng, việc user sửa hoặc xóa địa chỉ
-       * sẽ không làm thay đổi địa chỉ của Order cũ.
-       */
-      const orderAddress = orderAddressRepository.create({
-        orderId: savedOrder.id,
-
-        recipientName: address.recipientName,
-
-        recipientPhone: address.recipientPhone,
-
-        postalCode: address.postalCode,
-
-        prefecture: address.prefecture,
-
-        city: address.city,
-
-        addressLine1: address.addressLine1,
-
-        addressLine2: address.addressLine2 ?? null,
-      });
-
-      await orderAddressRepository.save(orderAddress);
-
-      /*
-       * Trừ tồn kho bằng chính các Inventory đã được khóa.
-       */
-      for (const item of cartData.items) {
-        const inventory = lockedInventories.get(item.product.id);
-
-        if (!inventory || !inventory.isStockManaged) {
-          continue;
+        if (appliedCoupon) {
+          await this.couponsService.recordCouponUsage(manager, {
+            coupon: appliedCoupon,
+            userId,
+            orderId: savedOrder.id,
+            discountAmount,
+          });
         }
 
-        inventory.stockQuantity -= item.cartItem.quantity;
+        /*
+         * Tạo snapshot của các sản phẩm trong đơn hàng.
+         */
+        const orderItems = cartData.items.map((item) => {
+          return orderItemRepository.create({
+            orderId: savedOrder.id,
 
-        await inventoryRepository.save(inventory);
+            productId: item.product.id,
+
+            productCode: item.product.productCode,
+
+            productName: item.product.name,
+
+            thumbnailUrl: item.primaryImage?.thumbnailUrl ?? null,
+
+            unitPrice: item.currentUnitPrice.toFixed(2),
+
+            quantity: item.cartItem.quantity,
+
+            subtotal: item.subtotal.toFixed(2),
+          });
+        });
+
+        await orderItemRepository.save(orderItems);
+
+        /*
+         * Tạo snapshot địa chỉ giao hàng.
+         *
+         * Sau khi đặt hàng, việc user sửa hoặc xóa địa chỉ
+         * sẽ không làm thay đổi địa chỉ của Order cũ.
+         */
+        const orderAddress = orderAddressRepository.create({
+          orderId: savedOrder.id,
+
+          recipientName: address.recipientName,
+
+          recipientPhone: address.recipientPhone,
+
+          postalCode: address.postalCode,
+
+          prefecture: address.prefecture,
+
+          city: address.city,
+
+          addressLine1: address.addressLine1,
+
+          addressLine2: address.addressLine2 ?? null,
+        });
+
+        await orderAddressRepository.save(orderAddress);
+
+        /*
+         * Trừ tồn kho bằng chính các Inventory đã được khóa.
+         */
+        for (const item of cartData.items) {
+          const inventory = lockedInventories.get(item.product.id);
+
+          if (!inventory || !inventory.isStockManaged) {
+            continue;
+          }
+
+          inventory.stockQuantity -= item.cartItem.quantity;
+
+          await inventoryRepository.save(inventory);
+        }
+
+        /*
+         * Xóa sản phẩm khỏi giỏ hàng sau khi tạo Order thành công.
+         *
+         * Vì thao tác nằm trong transaction nên nếu có lỗi,
+         * việc xóa này cũng sẽ rollback.
+         */
+        await cartItemRepository.delete({
+          cartId: cartData.cart.id,
+          id: In(cartData.items.map((item) => item.cartItem.id)),
+        });
+
+        await this.notificationsService.createWithManager(manager, {
+          userId,
+          type: NotificationType.ORDER_CREATED,
+          title: 'Đặt hàng thành công',
+          message:
+            `Đơn hàng ${savedOrder.orderNumber} ` + 'đã được tạo thành công.',
+          referenceType: 'ORDER',
+          referenceId: savedOrder.id,
+        });
+
+        return { orderId: savedOrder.id, created: true };
+      });
+    } catch (error) {
+      if (
+        !idempotencyKey ||
+        !idempotencyFingerprint ||
+        !this.isDuplicateEntry(error)
+      ) {
+        throw error;
       }
 
-      /*
-       * Xóa sản phẩm khỏi giỏ hàng sau khi tạo Order thành công.
-       *
-       * Vì thao tác nằm trong transaction nên nếu có lỗi,
-       * việc xóa này cũng sẽ rollback.
-       */
-      await cartItemRepository.delete({
-        cartId: cartData.cart.id,
+      const existingOrder = await this.ordersRepository.findOne({
+        where: { userId, idempotencyKey },
       });
 
-      await this.notificationsService.createWithManager(manager, {
-        userId,
-        type: NotificationType.ORDER_CREATED,
-        title: 'Đặt hàng thành công',
-        message:
-          `Đơn hàng ${savedOrder.orderNumber} ` + 'đã được tạo thành công.',
-        referenceType: 'ORDER',
-        referenceId: savedOrder.id,
-      });
+      if (!existingOrder) {
+        throw error;
+      }
 
-      return savedOrder.id;
-    });
+      this.validateIdempotencyFingerprint(
+        existingOrder,
+        idempotencyFingerprint,
+      );
+      creationResult = { orderId: existingOrder.id, created: false };
+    }
+
+    const orderId = creationResult.orderId;
 
     const order = await this.dataSource.getRepository(Order).findOne({
       where: {
@@ -328,15 +388,17 @@ export class OrdersService {
       throw new NotFoundException('Không thể lấy đơn hàng sau khi tạo');
     }
 
-    await this.emailsService.sendOrderCreatedEmail({
-      to: order.user.email,
-      fullName: order.user.fullName,
-      orderId: order.id,
-      orderNumber: order.orderNumber,
-      totalAmount: Number(order.totalAmount),
-      currencyCode: order.currencyCode,
-      deliveryDate: order.deliveryDate,
-    });
+    if (creationResult.created) {
+      await this.emailsService.sendOrderCreatedEmail({
+        to: order.user.email,
+        fullName: order.user.fullName,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        totalAmount: Number(order.totalAmount),
+        currencyCode: order.currencyCode,
+        deliveryDate: order.deliveryDate,
+      });
+    }
 
     return this.findOne(userId, orderId);
   }
@@ -391,8 +453,6 @@ export class OrdersService {
       async (manager) => {
         const orderRepository = manager.getRepository(Order);
 
-        const historyRepository = manager.getRepository(OrderStatusHistory);
-
         const order = await orderRepository.findOne({
           where: {
             id: orderId,
@@ -410,39 +470,12 @@ export class OrdersService {
           throw new NotFoundException('Không tìm thấy đơn hàng');
         }
 
-        if (order.status === OrderStatus.CANCELLED) {
-          throw new ConflictException('Đơn hàng đã bị hủy trước đó');
-        }
-
-        if (
-          ![OrderStatus.PENDING, OrderStatus.CONFIRMED].includes(order.status)
-        ) {
-          throw new ConflictException(
-            'Trạng thái đơn hàng hiện tại không cho phép hủy',
-          );
-        }
-
-        const previousStatus = order.status;
-
-        await this.restoreInventory(manager, order);
-
-        await this.couponsService.reverseCouponUsage(manager, order.id);
-
-        order.status = OrderStatus.CANCELLED;
-
-        order.cancelledAt = new Date();
-
-        await orderRepository.save(order);
-
-        const history = historyRepository.create({
-          orderId: order.id,
-          fromStatus: previousStatus,
-          toStatus: OrderStatus.CANCELLED,
+        await this.orderCancellationService.cancel(manager, {
+          order,
           changedByUserId: userId,
-          note: reason?.trim() || null,
+          reason,
+          allowedStatuses: [OrderStatus.PENDING, OrderStatus.CONFIRMED],
         });
-
-        await historyRepository.save(history);
 
         await this.notificationsService.createWithManager(manager, {
           userId: order.userId,
@@ -618,44 +651,201 @@ export class OrdersService {
     return `ORD-${datePart}-${uniquePart}`;
   }
 
-  private async restoreInventory(
+  private async lockCart(
     manager: EntityManager,
-    order: Order,
-  ): Promise<void> {
-    if (order.inventoryRestoredAt) {
-      throw new ConflictException('Tồn kho của đơn hàng đã được hoàn trước đó');
+    userId: string,
+  ): Promise<Cart> {
+    const cart = await manager.getRepository(Cart).findOne({
+      where: { userId },
+      lock: { mode: 'pessimistic_write' },
+    });
+
+    if (!cart) {
+      throw new BadRequestException('Giỏ hàng đang trống');
     }
 
-    const inventoryRepository = manager.getRepository(Inventory);
+    return cart;
+  }
 
-    for (const item of order.items) {
-      const inventory = await inventoryRepository.findOne({
+  private async loadCheckoutData(
+    manager: EntityManager,
+    userId: string,
+    addressId: string,
+    cart: Cart,
+  ): Promise<{ address: UserAddress; cartData: CartData }> {
+    const address = await manager.getRepository(UserAddress).findOne({
+      where: { id: addressId, userId },
+      lock: { mode: 'pessimistic_read' },
+    });
+
+    if (!address) {
+      throw new NotFoundException('Không tìm thấy địa chỉ');
+    }
+
+    const cartItems = await manager
+      .getRepository(CartItem)
+      .createQueryBuilder('cartItem')
+      .where('cartItem.cartId = :cartId', { cartId: cart.id })
+      .orderBy('cartItem.createdAt', 'ASC')
+      .setLock('pessimistic_write')
+      .getMany();
+
+    if (cartItems.length === 0) {
+      return {
+        address,
+        cartData: { cart, items: [], totalQuantity: 0, subtotal: 0 },
+      };
+    }
+
+    const productIds = [...new Set(cartItems.map((item) => item.productId))];
+    const [products, inventories, primaryImages] = await Promise.all([
+      manager.getRepository(Product).find({
+        where: { id: In(productIds) },
+        withDeleted: true,
+      }),
+      manager.getRepository(Inventory).find({
+        where: { productId: In(productIds) },
+      }),
+      manager.getRepository(ProductImage).find({
         where: {
-          productId: item.productId!,
+          productId: In(productIds),
+          isPrimary: true,
         },
-        lock: {
-          mode: 'pessimistic_write',
-        },
-      });
+      }),
+    ]);
 
-      if (!inventory) {
-        throw new NotFoundException(
-          `Không tìm thấy tồn kho của sản phẩm ${item.productName}`,
+    const productMap = new Map(
+      products.map((product) => [product.id, product]),
+    );
+    const inventoryMap = new Map(
+      inventories.map((inventory) => [inventory.productId, inventory]),
+    );
+    const imageMap = new Map(
+      primaryImages.map((image) => [image.productId, image]),
+    );
+
+    let totalQuantity = 0;
+    let subtotal = 0;
+
+    const items: CartDataItem[] = cartItems.map((cartItem) => {
+      const product = productMap.get(cartItem.productId);
+
+      if (!product) {
+        throw new ConflictException(
+          `Sản phẩm ${cartItem.productId} không còn tồn tại`,
         );
       }
 
-      if (!inventory.isStockManaged) {
-        continue;
-      }
+      const inventory = inventoryMap.get(product.id) ?? null;
+      const currentUnitPrice = this.getProductPrice(product);
+      const storedUnitPrice = Number(cartItem.unitPrice);
+      const availableQuantity = inventory
+        ? inventory.isStockManaged
+          ? Math.max(inventory.stockQuantity - inventory.reservedQuantity, 0)
+          : Number.MAX_SAFE_INTEGER
+        : 0;
+      const itemSubtotal = currentUnitPrice * cartItem.quantity;
+      const isProductActive =
+        product.deletedAt === null && product.status === ProductStatus.ACTIVE;
+      const hasEnoughStock =
+        inventory !== null && cartItem.quantity <= availableQuantity;
 
-      inventory.reservedQuantity = Math.max(
-        inventory.reservedQuantity - item.quantity,
-        0,
-      );
+      totalQuantity += cartItem.quantity;
+      subtotal += itemSubtotal;
 
-      await inventoryRepository.save(inventory);
+      return {
+        cartItem,
+        product,
+        inventory,
+        primaryImage: imageMap.get(product.id) ?? null,
+        currentUnitPrice,
+        storedUnitPrice,
+        availableQuantity,
+        subtotal: itemSubtotal,
+        priceChanged: storedUnitPrice !== currentUnitPrice,
+        isAvailable: isProductActive && hasEnoughStock,
+      };
+    });
+
+    return {
+      address,
+      cartData: { cart, items, totalQuantity, subtotal },
+    };
+  }
+
+  private validateCheckoutCart(cartData: CartData): void {
+    if (cartData.items.length === 0) {
+      throw new BadRequestException('Giỏ hàng đang trống');
     }
 
-    order.inventoryRestoredAt = new Date();
+    if (cartData.items.some((item) => !item.isAvailable)) {
+      throw new ConflictException(
+        'Có sản phẩm không còn khả dụng hoặc không đủ tồn kho',
+      );
+    }
+
+    if (cartData.items.some((item) => item.priceChanged)) {
+      throw new ConflictException(
+        'Giá sản phẩm đã thay đổi. Vui lòng kiểm tra lại giỏ hàng',
+      );
+    }
+  }
+
+  private getProductPrice(product: Product): number {
+    return product.salePrice !== null
+      ? Number(product.salePrice)
+      : Number(product.basePrice);
+  }
+
+  private normalizeIdempotencyKey(rawKey?: string): string | null {
+    const key = rawKey?.trim();
+
+    if (!key) {
+      return null;
+    }
+
+    if (key.length < 8 || key.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(key)) {
+      throw new BadRequestException('Idempotency-Key không hợp lệ');
+    }
+
+    return key;
+  }
+
+  private createIdempotencyFingerprint(dto: CreateOrderDto): string {
+    const normalizedPayload = JSON.stringify({
+      addressId: dto.addressId,
+      deliveryDate: dto.deliveryDate,
+      timeSlotId: dto.timeSlotId,
+      couponCode: dto.couponCode?.trim().toUpperCase() || null,
+      note: dto.note?.trim() || null,
+    });
+
+    return createHash('sha256').update(normalizedPayload).digest('hex');
+  }
+
+  private validateIdempotencyFingerprint(
+    order: Order,
+    fingerprint: string,
+  ): void {
+    if (order.idempotencyFingerprint !== fingerprint) {
+      throw new ConflictException(
+        'Idempotency-Key đã được sử dụng cho một yêu cầu khác',
+      );
+    }
+  }
+
+  private isDuplicateEntry(error: unknown): boolean {
+    if (!(error instanceof QueryFailedError)) {
+      return false;
+    }
+
+    const driverError: unknown = error.driverError;
+
+    return (
+      typeof driverError === 'object' &&
+      driverError !== null &&
+      'code' in driverError &&
+      driverError.code === 'ER_DUP_ENTRY'
+    );
   }
 }

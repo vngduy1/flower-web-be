@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { CreateAddressDto } from './dto/create-address.dto';
 import { UpdateAddressDto } from './dto/update-address.dto';
 import { UserAddress } from './entities/user-address.entity';
+import { User } from '../users/entities/user.entity';
 
 @Injectable()
 export class AddressesService {
@@ -19,6 +20,8 @@ export class AddressesService {
 
   async create(userId: string, dto: CreateAddressDto): Promise<UserAddress> {
     const addressId = await this.dataSource.transaction(async (manager) => {
+      await this.lockUser(manager, userId);
+
       const repository = manager.getRepository(UserAddress);
 
       const addressCount = await repository.count({
@@ -113,6 +116,8 @@ export class AddressesService {
 
   async setDefault(userId: string, addressId: string): Promise<UserAddress> {
     await this.dataSource.transaction(async (manager) => {
+      await this.lockUser(manager, userId);
+
       const repository = manager.getRepository(UserAddress);
 
       const address = await repository.findOne({
@@ -143,6 +148,8 @@ export class AddressesService {
     message: string;
   }> {
     await this.dataSource.transaction(async (manager) => {
+      await this.lockUser(manager, userId);
+
       const repository = manager.getRepository(UserAddress);
 
       const address = await repository.findOne({
@@ -207,5 +214,19 @@ export class AddressesService {
       })
       .andWhere('deleted_at IS NULL')
       .execute();
+  }
+
+  private async lockUser(
+    manager: EntityManager,
+    userId: string,
+  ): Promise<void> {
+    const user = await manager.getRepository(User).findOne({
+      where: { id: userId },
+      lock: { mode: 'pessimistic_write' },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy người dùng');
+    }
   }
 }

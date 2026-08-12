@@ -3,6 +3,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { AddressesService } from '../addresses/addresses.service';
 import { CartsService } from '../carts/carts.service';
 import { DEFAULT_CURRENCY } from '../common/constants/currency.constant';
+import { DeliveryAreasService } from '../deliveries/delivery-areas.service';
 
 import { CheckoutPreviewDto } from './dto/checkout-preview.dto';
 
@@ -11,6 +12,7 @@ export class CheckoutService {
   constructor(
     private readonly cartsService: CartsService,
     private readonly addressesService: AddressesService,
+    private readonly deliveryAreasService: DeliveryAreasService,
   ) {}
 
   async preview(userId: string, dto: CheckoutPreviewDto) {
@@ -46,11 +48,30 @@ export class CheckoutService {
     const subtotal = cartData.subtotal;
 
     /*
-     * Hiện tại dùng phí giao hàng tạm thời.
-     * Sau này có thể chuyển sang bảng shipping_zones
-     * hoặc delivery_fees.
+     * 配送先住所から配送エリアを取得する。
+     *
+     * 例:
+     * user_addresses.city = 川崎市幸区
+     *
+     * delivery_areas:
+     * city      = 川崎市
+     * area_name = 幸区
      */
-    const deliveryFee = this.calculateDeliveryFee(address.prefecture);
+    const deliveryArea = await this.deliveryAreasService.findByAddress(
+      address.prefecture,
+      address.city,
+    );
+
+    if (!deliveryArea) {
+      throw new BadRequestException(
+        '選択されたお届け先は、現在配送対象エリア外です。',
+      );
+    }
+
+    /*
+     * 配送料は delivery_areas の設定値を使用する。
+     */
+    const deliveryFee = deliveryArea.deliveryFee;
 
     const discountAmount = 0;
 
@@ -104,6 +125,14 @@ export class CheckoutService {
         date: dto.deliveryDate,
         timeSlot: dto.deliveryTimeSlot ?? null,
         fee: deliveryFee,
+
+        // Có thể thêm để frontend biết khu vực nào được match
+        area: {
+          id: deliveryArea.id,
+          prefecture: deliveryArea.prefecture,
+          city: deliveryArea.city,
+          areaName: deliveryArea.areaName,
+        },
       },
 
       currency: DEFAULT_CURRENCY,
@@ -117,16 +146,5 @@ export class CheckoutService {
 
       warnings,
     };
-  }
-
-  private calculateDeliveryFee(prefecture: string): number {
-    /*
-     * Phí giao hàng tạm thời.
-     */
-    if (prefecture === '東京都' || prefecture === '神奈川県') {
-      return 500;
-    }
-
-    return 800;
   }
 }
