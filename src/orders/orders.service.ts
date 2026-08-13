@@ -430,10 +430,11 @@ export class OrdersService {
     const order = await this.ordersRepository.findOne({
       where: {
         id: orderId,
-        userId,
       },
       relations: {
-        items: true,
+        items: {
+          product: true,
+        },
         deliveryAddress: true,
       },
     });
@@ -544,6 +545,8 @@ export class OrdersService {
           productCode: item.productCode,
 
           productName: item.productName,
+
+          productSlug: item.product?.slug ?? null,
 
           thumbnailUrl: item.thumbnailUrl,
 

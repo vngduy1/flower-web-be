@@ -19,21 +19,21 @@ export class CreateProductDto {
   @IsString()
   @IsNotEmpty()
   @Length(1, 50)
-  productCode: string;
+  productCode!: string;
 
   @IsString()
   @IsNotEmpty()
   @Length(1, 200)
-  name: string;
+  name!: string;
 
   @IsString()
   @IsNotEmpty()
   @Length(1, 220)
-  slug: string;
+  slug!: string;
 
   @IsString()
   @IsNotEmpty()
-  categoryId: string;
+  categoryId!: string;
 
   @IsOptional()
   @IsString()
@@ -44,7 +44,7 @@ export class CreateProductDto {
     decimal_digits: '0,2',
     force_decimal: false,
   })
-  basePrice: string;
+  basePrice!: string;
 
   @IsOptional()
   @IsDecimal({

@@ -18,6 +18,8 @@ import { ProductReview } from './entities/product-review.entity';
 import { ReviewStatus } from './enums/review-status.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/enums/notification-type.enum';
+import { RoleCode } from 'src/auth/enums/role-code.enum';
+import { User } from 'src/users/entities/user.entity';
 
 @Injectable()
 export class ReviewsService {
@@ -45,8 +47,8 @@ export class ReviewsService {
   async create(userId: string, dto: CreateReviewDto) {
     const reviewId = await this.dataSource.transaction(async (manager) => {
       const orderItemRepository = manager.getRepository(OrderItem);
-
       const reviewRepository = manager.getRepository(ProductReview);
+      const userRepository = manager.getRepository(User);
 
       const orderItem = await orderItemRepository.findOne({
         where: {
@@ -78,9 +80,6 @@ export class ReviewsService {
         );
       }
 
-      /*
-       * withDeleted để phát hiện review đã xóa mềm.
-       */
       const existingReview = await reviewRepository.findOne({
         where: {
           orderItemId: orderItem.id,
@@ -97,10 +96,8 @@ export class ReviewsService {
         );
       }
 
-      /*
-       * Nếu trước đây user đã xóa review thì khôi phục
-       * chính record cũ, tránh vi phạm unique orderItemId.
-       */
+      let savedReview: ProductReview;
+
       if (existingReview) {
         existingReview.productId = orderItem.productId;
         existingReview.userId = userId;
@@ -115,30 +112,48 @@ export class ReviewsService {
         existingReview.rejectedAt = null;
         existingReview.deletedAt = null;
 
-        const restored = await reviewRepository.save(existingReview);
+        savedReview = await reviewRepository.save(existingReview);
+      } else {
+        const review = reviewRepository.create({
+          productId: orderItem.productId,
+          userId,
+          orderItemId: orderItem.id,
 
-        return restored.id;
+          rating: dto.rating,
+          title: dto.title?.trim() || null,
+          comment: dto.comment.trim(),
+
+          status: ReviewStatus.PENDING,
+
+          adminComment: null,
+          approvedAt: null,
+          rejectedAt: null,
+        });
+
+        savedReview = await reviewRepository.save(review);
       }
 
-      const review = reviewRepository.create({
-        productId: orderItem.productId,
-        userId,
-        orderItemId: orderItem.id,
+      const admins = await userRepository
+        .createQueryBuilder('user')
+        .innerJoin('user.role', 'role')
+        .where('role.roleCode = :roleCode', {
+          roleCode: RoleCode.ADMIN,
+        })
+        .andWhere('user.deletedAt IS NULL')
+        .getMany();
 
-        rating: dto.rating,
-        title: dto.title?.trim() || null,
-        comment: dto.comment.trim(),
+      for (const admin of admins) {
+        await this.notificationsService.createWithManager(manager, {
+          userId: admin.id,
+          type: NotificationType.REVIEW_SUBMITTED,
+          title: '新しいレビューが投稿されました',
+          message: `「${orderItem.productName}」に新しいレビューが投稿されました。`,
+          referenceType: 'REVIEW',
+          referenceId: savedReview.id,
+        });
+      }
 
-        status: ReviewStatus.PENDING,
-
-        adminComment: null,
-        approvedAt: null,
-        rejectedAt: null,
-      });
-
-      const saved = await reviewRepository.save(review);
-
-      return saved.id;
+      return savedReview.id;
     });
 
     return this.findMyReview(userId, reviewId);

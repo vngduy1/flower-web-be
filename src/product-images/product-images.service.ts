@@ -104,7 +104,7 @@ export class ProductImagesService {
   }
 
   async findAllByProduct(productId: string): Promise<ProductImage[]> {
-    await this.validateProduct(productId, true);
+    await this.validateProduct(productId);
 
     return this.productImagesRepository.find({
       where: {

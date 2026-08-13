@@ -161,17 +161,16 @@ export class AdminProductsService {
   }
 
   async findOne(productId: string) {
-    const product = await this.dataSource.getRepository(Product).findOne({
-      where: {
-        id: productId,
-        deletedAt: IsNull(),
-      },
-      relations: {
-        category: true,
-        images: true,
-        inventory: true,
-      },
-    });
+    const product = await this.dataSource
+      .getRepository(Product)
+      .createQueryBuilder('product')
+      .addSelect('product.costPrice')
+      .leftJoinAndSelect('product.category', 'category')
+      .leftJoinAndSelect('product.images', 'images')
+      .leftJoinAndSelect('product.inventory', 'inventory')
+      .where('product.id = :productId', { productId })
+      .andWhere('product.deletedAt IS NULL')
+      .getOne();
 
     if (!product) {
       throw new NotFoundException('Không tìm thấy sản phẩm');
@@ -336,6 +335,7 @@ export class AdminProductsService {
         description: product.description,
         basePrice: product.basePrice,
         salePrice: product.salePrice,
+        costPrice: product.costPrice,
         status: product.status,
         isFeatured: product.isFeatured,
         availableFrom: product.availableFrom,

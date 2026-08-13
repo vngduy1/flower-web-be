@@ -211,9 +211,10 @@ export class ProductsService {
     }
 
     if (updateProductDto.categoryId !== undefined) {
-      await this.validateCategory(updateProductDto.categoryId);
+      const category = await this.validateCategory(updateProductDto.categoryId);
 
-      product.categoryId = updateProductDto.categoryId;
+      product.categoryId = category.id;
+      product.category = category;
     }
 
     if (updateProductDto.description !== undefined) {
@@ -230,7 +231,7 @@ export class ProductsService {
     const costPrice =
       updateProductDto.costPrice !== undefined
         ? updateProductDto.costPrice
-        : await this.getCurrentCostPrice(id);
+        : product.costPrice;
 
     this.validatePrices(
       basePrice,
@@ -284,6 +285,10 @@ export class ProductsService {
 
     await this.productsRepository.save(product);
 
+    await this.productsRepository.findOne({
+      where: { id },
+    });
+
     return this.findManagedProduct(id);
   }
 
@@ -315,10 +320,13 @@ export class ProductsService {
   }
 
   private async findManagedProduct(id: string): Promise<Product> {
-    const product = await this.productsRepository.findOne({
-      where: { id, deletedAt: IsNull() },
-      relations: { category: true },
-    });
+    const product = await this.productsRepository
+      .createQueryBuilder('product')
+      .addSelect('product.costPrice')
+      .leftJoinAndSelect('product.category', 'category')
+      .where('product.id = :id', { id })
+      .andWhere('product.deletedAt IS NULL')
+      .getOne();
 
     if (!product) {
       throw new NotFoundException('Không tìm thấy sản phẩm');
