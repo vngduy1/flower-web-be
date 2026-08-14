@@ -48,7 +48,6 @@ export class ReviewsService {
     const reviewId = await this.dataSource.transaction(async (manager) => {
       const orderItemRepository = manager.getRepository(OrderItem);
       const reviewRepository = manager.getRepository(ProductReview);
-      const userRepository = manager.getRepository(User);
 
       const orderItem = await orderItemRepository.findOne({
         where: {
@@ -133,25 +132,16 @@ export class ReviewsService {
         savedReview = await reviewRepository.save(review);
       }
 
-      const admins = await userRepository
-        .createQueryBuilder('user')
-        .innerJoin('user.role', 'role')
-        .where('role.roleCode = :roleCode', {
-          roleCode: RoleCode.ADMIN,
-        })
-        .andWhere('user.deletedAt IS NULL')
-        .getMany();
-
-      for (const admin of admins) {
-        await this.notificationsService.createWithManager(manager, {
-          userId: admin.id,
+      await this.notificationsService.createAdminNotificationsWithManager(
+        manager,
+        {
           type: NotificationType.REVIEW_SUBMITTED,
           title: '新しいレビューが投稿されました',
           message: `「${orderItem.productName}」に新しいレビューが投稿されました。`,
           referenceType: 'REVIEW',
           referenceId: savedReview.id,
-        });
-      }
+        },
+      );
 
       return savedReview.id;
     });

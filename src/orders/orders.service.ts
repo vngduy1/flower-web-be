@@ -346,6 +346,17 @@ export class OrdersService {
           referenceId: savedOrder.id,
         });
 
+        await this.notificationsService.createAdminNotificationsWithManager(
+          manager,
+          {
+            type: NotificationType.ORDER_CREATED,
+            title: '新しい注文が入りました',
+            message: `注文 ${savedOrder.orderNumber} が作成されました。`,
+            referenceType: 'ORDER',
+            referenceId: savedOrder.id,
+          },
+        );
+
         return { orderId: savedOrder.id, created: true };
       });
     } catch (error) {
@@ -430,6 +441,7 @@ export class OrdersService {
     const order = await this.ordersRepository.findOne({
       where: {
         id: orderId,
+        userId,
       },
       relations: {
         items: {
@@ -486,6 +498,17 @@ export class OrdersService {
           referenceType: 'ORDER',
           referenceId: order.id,
         });
+
+        await this.notificationsService.createAdminNotificationsWithManager(
+          manager,
+          {
+            type: NotificationType.ORDER_CANCELLED,
+            title: '注文がキャンセルされました',
+            message: `注文 ${order.orderNumber} が顧客によってキャンセルされました。`,
+            referenceType: 'ORDER',
+            referenceId: order.id,
+          },
+        );
 
         return order.id;
       },

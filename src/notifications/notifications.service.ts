@@ -5,6 +5,7 @@ import { EntityManager, IsNull, Repository } from 'typeorm';
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { Notification } from './entities/notification.entity';
 import { NotificationType } from './enums/notification-type.enum';
+import { User } from 'src/users/entities/user.entity';
 
 export type CreateNotificationParams = {
   userId: string;
@@ -21,6 +22,42 @@ export class NotificationsService {
     @InjectRepository(Notification)
     private readonly notificationsRepository: Repository<Notification>,
   ) {}
+
+  async createAdminNotificationsWithManager(
+    manager: EntityManager,
+    params: Omit<CreateNotificationParams, 'userId'>,
+  ): Promise<void> {
+    const admins = await manager
+      .getRepository(User)
+      .createQueryBuilder('user')
+      .innerJoin('user.role', 'role')
+      .where('role.roleCode = :roleCode', {
+        roleCode: 'ADMIN',
+      })
+      .andWhere('user.deletedAt IS NULL')
+      .getMany();
+
+    if (admins.length === 0) {
+      return;
+    }
+
+    const notificationRepository = manager.getRepository(Notification);
+
+    const notifications = admins.map((admin) =>
+      notificationRepository.create({
+        userId: admin.id,
+        type: params.type,
+        title: params.title.trim(),
+        message: params.message.trim(),
+        referenceType: params.referenceType?.trim() || null,
+        referenceId: params.referenceId ?? null,
+        isRead: false,
+        readAt: null,
+      }),
+    );
+
+    await notificationRepository.save(notifications);
+  }
 
   /**
    * Dùng nội bộ từ OrdersService, PaymentsService,

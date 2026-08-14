@@ -202,6 +202,17 @@ export class PaymentsService {
           referenceId: order.id,
         });
 
+        await this.notificationsService.createAdminNotificationsWithManager(
+          manager,
+          {
+            type: NotificationType.PAYMENT_SUCCESS,
+            title: '注文の支払いが完了しました',
+            message: `注文 ${order.orderNumber} の支払いが完了しました。`,
+            referenceType: 'ORDER',
+            referenceId: order.id,
+          },
+        );
+
         return savedPayment.id;
       },
     );
