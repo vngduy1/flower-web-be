@@ -54,16 +54,30 @@ export class CategoriesService {
     } else {
       queryBuilder.andWhere('category.deletedAt IS NULL');
     }
-
     if (query.keyword?.trim()) {
       const keyword = `%${query.keyword.trim()}%`;
 
       queryBuilder.andWhere(
         `(
-        category.name LIKE :keyword
-        OR category.slug LIKE :keyword
-      )`,
+      category.name LIKE :keyword
+      OR category.slug LIKE :keyword
+    )`,
         { keyword },
+      );
+    }
+
+    if (query.hasActiveProducts === true) {
+      queryBuilder.andWhere(
+        `EXISTS (
+      SELECT 1
+      FROM products product
+      WHERE product.category_id = category.id
+        AND product.status = :activeProductStatus
+        AND product.deleted_at IS NULL
+    )`,
+        {
+          activeProductStatus: 'ACTIVE',
+        },
       );
     }
 
@@ -267,3 +281,4 @@ export class CategoriesService {
     return slug.trim().toLowerCase().replace(/\s+/g, '-');
   }
 }
+
