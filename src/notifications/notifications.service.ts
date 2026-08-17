@@ -2,10 +2,11 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, IsNull, Repository } from 'typeorm';
 
+import { User } from '../users/entities/user.entity';
+
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { Notification } from './entities/notification.entity';
 import { NotificationType } from './enums/notification-type.enum';
-import { User } from 'src/users/entities/user.entity';
 
 export type CreateNotificationParams = {
   userId: string;
