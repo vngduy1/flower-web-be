@@ -169,6 +169,69 @@ export class EmailsService implements OnModuleInit {
   }
 
   /**
+   * Email xác minh địa chỉ email.
+   */
+  async sendEmailVerificationCode(params: {
+    to: string;
+    fullName: string;
+    code: string;
+    expiresInMinutes: number;
+  }): Promise<boolean> {
+    return this.send({
+      to: params.to,
+      subject: 'Mã xác minh địa chỉ email',
+      text:
+        `Xin chào ${params.fullName}, ` +
+        `mã xác minh email của bạn là ${params.code}. ` +
+        `Mã có hiệu lực trong ${params.expiresInMinutes} phút.`,
+      html: this.buildLayout({
+        title: 'Xác minh địa chỉ email',
+        content: `
+        <p>
+          Xin chào
+          <strong>${this.escapeHtml(params.fullName)}</strong>,
+        </p>
+
+        <p>
+          Vui lòng sử dụng mã dưới đây để xác minh
+          địa chỉ email của bạn.
+        </p>
+
+        <div
+          style="
+            margin:24px 0;
+            padding:20px;
+            text-align:center;
+            background:#f5f5f5;
+            border-radius:8px;
+          "
+        >
+          <strong
+            style="
+              font-size:32px;
+              letter-spacing:8px;
+            "
+          >
+            ${this.escapeHtml(params.code)}
+          </strong>
+        </div>
+
+        <p>
+          Mã xác minh có hiệu lực trong
+          <strong>${params.expiresInMinutes} phút</strong>.
+        </p>
+
+        <p>
+          Nếu bạn không thực hiện đăng ký tài khoản,
+          vui lòng bỏ qua email này.
+        </p>
+      `,
+      }),
+      referenceType: 'USER',
+    });
+  }
+
+  /**
    * Email tạo đơn hàng.
    */
   async sendOrderCreatedEmail(params: {

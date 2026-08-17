@@ -18,8 +18,6 @@ import { ProductReview } from './entities/product-review.entity';
 import { ReviewStatus } from './enums/review-status.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/enums/notification-type.enum';
-import { RoleCode } from 'src/auth/enums/role-code.enum';
-import { User } from 'src/users/entities/user.entity';
 
 @Injectable()
 export class ReviewsService {

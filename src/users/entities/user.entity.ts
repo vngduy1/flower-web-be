@@ -22,7 +22,7 @@ export class User {
     type: 'bigint',
     unsigned: true,
   })
-  id: string;
+  id!: string;
 
   @Index()
   @Column({
@@ -30,14 +30,14 @@ export class User {
     type: 'bigint',
     unsigned: true,
   })
-  roleId: string;
+  roleId!: string;
 
   @Column({
     type: 'varchar',
     length: 255,
     unique: true,
   })
-  email: string;
+  email!: string;
 
   @Column({
     name: 'password_hash',
@@ -45,47 +45,70 @@ export class User {
     length: 255,
     select: false,
   })
-  passwordHash: string;
+  passwordHash!: string;
 
   @Column({
     name: 'full_name',
     type: 'varchar',
     length: 100,
   })
-  fullName: string;
+  fullName!: string;
 
   @Column({
     type: 'varchar',
     length: 20,
     nullable: true,
   })
-  phone: string | null;
+  phone!: string | null;
 
   @Column({
     type: 'enum',
     enum: UserStatus,
     default: UserStatus.ACTIVE,
   })
-  status: UserStatus;
+  status!: UserStatus;
+
+  @Column({
+    name: 'email_verification_code',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+    select: false,
+  })
+  emailVerificationCode!: string | null;
+
+  @Column({
+    name: 'email_verification_expires_at',
+    type: 'datetime',
+    nullable: true,
+  })
+  emailVerificationExpiresAt!: Date | null;
+
+  @Column({
+    name: 'email_verified_at',
+    type: 'datetime',
+    nullable: true,
+  })
+  emailVerifiedAt!: Date | null;
 
   @CreateDateColumn({
     name: 'created_at',
     type: 'datetime',
   })
-  createdAt: Date;
+  createdAt!: Date;
 
   @UpdateDateColumn({
     name: 'updated_at',
     type: 'datetime',
   })
-  updatedAt: Date;
+  updatedAt!: Date;
 
   @DeleteDateColumn({
     name: 'deleted_at',
     type: 'datetime',
     nullable: true,
   })
-  deletedAt: Date | null;
+  deletedAt!: Date | null;
 
   @ManyToOne(() => Role, (role) => role.users, {
     nullable: false,
@@ -95,11 +118,11 @@ export class User {
   @JoinColumn({
     name: 'role_id',
   })
-  role: Role;
+  role!: Role;
 
   @OneToMany(() => UserAddress, (address) => address.user)
-  addresses: UserAddress[];
+  addresses!: UserAddress[];
 
   @OneToMany(() => Order, (order) => order.user)
-  orders: Order[];
+  orders!: Order[];
 }

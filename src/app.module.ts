@@ -34,6 +34,7 @@ import {
 import { HealthModule } from './common/health.module';
 import { LifecycleService } from './common/lifecycle.service';
 import { AddOrderIdempotency1786330000000 } from './migrations/1786330000000-AddOrderIdempotency';
+import { AddEmailVerification1786930000000 } from './migrations/1786930000000-add-email-verification';
 
 @Module({
   imports: [
@@ -77,7 +78,10 @@ import { AddOrderIdempotency1786330000000 } from './migrations/1786330000000-Add
           synchronize,
           dropSchema,
           migrationsRun: false,
-          migrations: [AddOrderIdempotency1786330000000],
+          migrations: [
+            AddEmailVerification1786930000000,
+            AddOrderIdempotency1786330000000,
+          ],
           charset: 'utf8mb4',
           timezone: '+09:00',
           logging: readBoolean(configService.get<string>('DB_LOGGING'), false),

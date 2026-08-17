@@ -1,4 +1,4 @@
-import { Transform, Type } from 'class-transformer';
+import { Transform, Type, type TransformFnParams } from 'class-transformer';
 import {
   IsBoolean,
   IsInt,
@@ -14,19 +14,21 @@ export class QueryCategoryDto {
   keyword?: string;
 
   @IsOptional()
-  @Transform(({ value }) => {
+  @Transform(({ value }: TransformFnParams) => {
     if (value === 'true') return true;
     if (value === 'false') return false;
-    return value;
+
+    return value as unknown;
   })
   @IsBoolean()
   deletedOnly?: boolean;
 
   @IsOptional()
-  @Transform(({ value }) => {
+  @Transform(({ value }: TransformFnParams) => {
     if (value === 'true') return true;
     if (value === 'false') return false;
-    return value;
+
+    return value as unknown;
   })
   @IsBoolean()
   hasActiveProducts?: boolean;

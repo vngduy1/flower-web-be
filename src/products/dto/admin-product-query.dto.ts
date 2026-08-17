@@ -1,4 +1,4 @@
-import { Transform, Type } from 'class-transformer';
+import { Transform, Type, type TransformFnParams } from 'class-transformer';
 import {
   IsBoolean,
   IsEnum,
@@ -29,10 +29,11 @@ export class AdminProductQueryDto {
   isFeatured?: boolean;
 
   @IsOptional()
-  @Transform(({ value }) => {
+  @Transform(({ value }: TransformFnParams) => {
     if (value === 'true') return true;
     if (value === 'false') return false;
-    return value;
+
+    return value as unknown;
   })
   @IsBoolean()
   deletedOnly?: boolean;

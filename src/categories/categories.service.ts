@@ -281,4 +281,3 @@ export class CategoriesService {
     return slug.trim().toLowerCase().replace(/\s+/g, '-');
   }
 }
-
