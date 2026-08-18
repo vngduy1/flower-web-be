@@ -21,6 +21,8 @@ import { Payment } from '../../payments/entities/payment.entity';
 import { OrderStatusHistory } from './order-status-history.entity';
 import { Coupon } from '../../coupons/entities/coupon.entity';
 
+import { GiftMessage } from '../../gift-messages/entities/gift-message.entity';
+
 @Entity('orders')
 @Index('idx_orders_user_id', ['userId'])
 @Index('idx_orders_status', ['status'])
@@ -34,7 +36,7 @@ export class Order {
     type: 'bigint',
     unsigned: true,
   })
-  id: string;
+  id!: string;
 
   @Column({
     name: 'order_number',
@@ -42,14 +44,14 @@ export class Order {
     length: 30,
     unique: true,
   })
-  orderNumber: string;
+  orderNumber!: string;
 
   @Column({
     name: 'user_id',
     type: 'bigint',
     unsigned: true,
   })
-  userId: string;
+  userId!: string;
 
   @Column({
     name: 'idempotency_key',
@@ -74,14 +76,14 @@ export class Order {
   @JoinColumn({
     name: 'user_id',
   })
-  user: User;
+  user!: User;
 
   @Column({
     type: 'enum',
     enum: OrderStatus,
     default: OrderStatus.PENDING,
   })
-  status: OrderStatus;
+  status!: OrderStatus;
 
   @Column({
     name: 'payment_status',
@@ -89,14 +91,14 @@ export class Order {
     enum: PaymentStatus,
     default: PaymentStatus.UNPAID,
   })
-  paymentStatus: PaymentStatus;
+  paymentStatus!: PaymentStatus;
 
   @Column({
     type: 'decimal',
     precision: 12,
     scale: 2,
   })
-  subtotal: string;
+  subtotal!: string;
 
   @Column({
     name: 'delivery_fee',
@@ -105,7 +107,7 @@ export class Order {
     scale: 2,
     default: 0,
   })
-  deliveryFee: string;
+  deliveryFee!: string;
 
   @Column({
     name: 'discount_amount',
@@ -114,7 +116,7 @@ export class Order {
     scale: 2,
     default: 0,
   })
-  discountAmount: string;
+  discountAmount!: string;
 
   @Column({
     name: 'coupon_id',
@@ -161,7 +163,7 @@ export class Order {
     precision: 12,
     scale: 2,
   })
-  totalAmount: string;
+  totalAmount!: string;
 
   @Column({
     name: 'currency_code',
@@ -169,13 +171,13 @@ export class Order {
     length: 3,
     default: 'JPY',
   })
-  currencyCode: string;
+  currencyCode!: string;
 
   @Column({
     name: 'delivery_date',
     type: 'date',
   })
-  deliveryDate: string;
+  deliveryDate!: string;
 
   @Column({
     name: 'delivery_time_slot_id',
@@ -191,25 +193,25 @@ export class Order {
     length: 50,
     nullable: true,
   })
-  deliveryTimeSlot: string | null;
+  deliveryTimeSlot!: string | null;
 
   @Column({
     type: 'text',
     nullable: true,
   })
-  note: string | null;
+  note!: string | null;
 
   @OneToMany(() => OrderItem, (orderItem) => orderItem.order)
-  items: OrderItem[];
+  items!: OrderItem[];
 
   @OneToMany(() => Payment, (payment) => payment.order)
-  payments: Payment[];
+  payments!: Payment[];
 
   @OneToMany(() => OrderStatusHistory, (statusHistory) => statusHistory.order)
-  statusHistories: OrderStatusHistory[];
+  statusHistories!: OrderStatusHistory[];
 
   @OneToOne(() => OrderAddress, (orderAddress) => orderAddress.order)
-  deliveryAddress: OrderAddress;
+  deliveryAddress!: OrderAddress;
 
   @Column({
     name: 'confirmed_at',
@@ -260,15 +262,18 @@ export class Order {
   })
   deliveryCapacityReleasedAt!: Date | null;
 
+  @OneToOne(() => GiftMessage, (giftMessage) => giftMessage.order)
+  giftMessage!: GiftMessage | null;
+
   @CreateDateColumn({
     name: 'created_at',
     type: 'datetime',
   })
-  createdAt: Date;
+  createdAt!: Date;
 
   @UpdateDateColumn({
     name: 'updated_at',
     type: 'datetime',
   })
-  updatedAt: Date;
+  updatedAt!: Date;
 }

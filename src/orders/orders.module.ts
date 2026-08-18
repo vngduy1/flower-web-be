@@ -16,6 +16,7 @@ import { CouponsModule } from '../coupons/coupons.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailsModule } from '../emails/emails.module';
 import { OrderCancellationService } from './order-cancellation.service';
+import { GiftMessagesModule } from '../gift-messages/gift-messages.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { OrderCancellationService } from './order-cancellation.service';
     CouponsModule,
     NotificationsModule,
     EmailsModule,
+    GiftMessagesModule,
   ],
   controllers: [OrdersController, AdminOrdersController],
   providers: [OrdersService, AdminOrdersService, OrderCancellationService],

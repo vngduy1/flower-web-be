@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrdersService } from './orders.service';
 import { CancelOrderDto } from './dto/cancel-order.dto';
+import { UpdateGiftMessageDto } from '../gift-messages/dto/update-gift-message.dto';
 
 type AuthenticatedRequest = Request & {
   user: {
@@ -41,6 +42,15 @@ export class OrdersController {
     idempotencyKey?: string,
   ) {
     return this.ordersService.create(request.user.id, dto, idempotencyKey);
+  }
+
+  @Patch(':id/gift-message')
+  updateGiftMessage(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') orderId: string,
+    @Body() dto: UpdateGiftMessageDto,
+  ) {
+    return this.ordersService.updateGiftMessage(request.user.id, orderId, dto);
   }
 
   @Get()

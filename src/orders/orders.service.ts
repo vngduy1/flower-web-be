@@ -36,6 +36,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/enums/notification-type.enum';
 import { EmailsService } from '../emails/emails.service';
 import { OrderCancellationService } from './order-cancellation.service';
+import { UpdateGiftMessageDto } from '../gift-messages/dto/update-gift-message.dto';
+import { GiftMessagesService } from '../gift-messages/gift-messages.service';
 
 @Injectable()
 export class OrdersService {
@@ -48,6 +50,7 @@ export class OrdersService {
     private readonly notificationsService: NotificationsService,
     private readonly emailsService: EmailsService,
     private readonly orderCancellationService: OrderCancellationService,
+    private readonly giftMessagesService: GiftMessagesService,
 
     private readonly dataSource: DataSource,
   ) {}
@@ -412,6 +415,14 @@ export class OrdersService {
     }
 
     return this.findOne(userId, orderId);
+  }
+
+  async updateGiftMessage(
+    userId: string,
+    orderId: string,
+    dto: UpdateGiftMessageDto,
+  ) {
+    return this.giftMessagesService.updateForUser(orderId, userId, dto);
   }
 
   /**
